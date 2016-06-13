@@ -235,7 +235,7 @@
  * It defaults to 4096-bits [allowing multiplications upto 2048x2048 bits ]
  */
 #ifndef FP_MAX_BITS
-    #define FP_MAX_BITS           4096
+    #define FP_MAX_BITS           8192
 #endif
 #define FP_MAX_SIZE           (FP_MAX_BITS+(8*DIGIT_BIT))
 
