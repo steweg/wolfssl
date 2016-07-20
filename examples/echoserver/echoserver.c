@@ -114,11 +114,9 @@ THREAD_RETURN CYASSL_THREAD echoserver_test(void* args)
     doPSK = 1;
 #endif
 
-#if defined(USE_WINDOWS_API)
-    /* Generate random port for testing */
-    port = GetRandomPort();
-#elif defined(NO_MAIN_DRIVER) && !defined(CYASSL_SNIFFER) && \
-     !defined(WOLFSSL_MDK_SHELL) && !defined(CYASSL_TIRTOS)
+#if defined(NO_MAIN_DRIVER) && !defined(CYASSL_SNIFFER) && \
+     !defined(WOLFSSL_MDK_SHELL) && !defined(CYASSL_TIRTOS) && \
+     !defined(USE_WINDOWS_API)
     /* Let tcp_listen assign port */
     port = 0;
 #else
@@ -411,6 +409,11 @@ THREAD_RETURN CYASSL_THREAD echoserver_test(void* args)
             err_sys("Cavium OpenNitroxDevice failed");
 #endif /* HAVE_CAVIUM */
 
+#ifdef HAVE_WNR
+        if (wc_InitNetRandom(wnrConfig, NULL, 5000) != 0)
+            err_sys("Whitewood netRandom global config failed");
+#endif
+
         StartTCP();
 
         args.argc = argc;
@@ -427,6 +430,12 @@ THREAD_RETURN CYASSL_THREAD echoserver_test(void* args)
 #ifdef HAVE_CAVIUM
         CspShutdown(CAVIUM_DEV_ID);
 #endif
+
+#ifdef HAVE_WNR
+        if (wc_FreeNetRandom() < 0)
+            err_sys("Failed to free netRandom context");
+#endif /* HAVE_WNR */
+
         return args.return_code;
     }
 

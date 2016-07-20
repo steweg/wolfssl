@@ -146,6 +146,10 @@ enum wolfSSL_ErrorCodes {
 
     RSA_KEY_SIZE_E               = -409,   /* RSA key too small */
     ECC_KEY_SIZE_E               = -410,   /* ECC key too small */
+
+    DTLS_EXPORT_VER_E            = -411,   /* export version error */
+    INPUT_SIZE_E                 = -412,   /* input size too big error */
+    CTX_INIT_MUTEX_E             = -413,   /* initialize ctx mutex error */
     /* add strings to wolfSSL_ERR_reason_error_string in internal.c !!!!! */
 
     /* begin negotiation parameter errors */

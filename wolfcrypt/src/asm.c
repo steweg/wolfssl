@@ -136,7 +136,7 @@ __asm__(                                                      \
    "adcl $0,%%edx \n\t"                                   \
    "movl %%edx,%1 \n\t"                                   \
 :"=g"(_c[LO]), "=r"(cy)                                   \
-:"0"(_c[LO]), "1"(cy), "g"(mu), "g"(*tmpm++)              \
+:"0"(_c[LO]), "1"(cy), "r"(mu), "r"(*tmpm++)              \
 : "%eax", "%edx", "cc")
 
 #define PROPCARRY                           \
@@ -533,25 +533,21 @@ __asm__(                               \
    mu = c[x] * mp
 
 #define INNERMUL                     \
-__asm__(                                 \
+__asm__(                             \
    " mullw    16,%3,%4       \n\t"   \
    " mulhwu   17,%3,%4       \n\t"   \
-   " addc     16,16,%0       \n\t"   \
+   " addc     16,16,%2       \n\t"   \
    " addze    17,17          \n\t"   \
-   " lwz      18,%1          \n\t"   \
-   " addc     16,16,18       \n\t"   \
+   " addc     %1,16,%5       \n\t"   \
    " addze    %0,17          \n\t"   \
-   " stw      16,%1          \n\t"   \
-:"=r"(cy),"=m"(_c[0]):"0"(cy),"r"(mu),"r"(tmpm[0]),"1"(_c[0]):"16", "17", "18","cc"); ++tmpm;
+:"=r"(cy),"=r"(_c[0]):"0"(cy),"r"(mu),"r"(tmpm[0]),"1"(_c[0]):"16", "17", "cc"); ++tmpm;
 
 #define PROPCARRY                    \
-__asm__(                                 \
-   " lwz      16,%1         \n\t"    \
-   " addc     16,16,%0      \n\t"    \
-   " stw      16,%1         \n\t"    \
-   " xor      %0,%0,%0      \n\t"    \
-   " addze    %0,%0         \n\t"    \
-:"=r"(cy),"=m"(_c[0]):"0"(cy),"1"(_c[0]):"16","cc");
+__asm__(                             \
+   " addc     %1,%3,%2      \n\t"    \
+   " xor      %0,%2,%2      \n\t"    \
+   " addze    %0,%2         \n\t"    \
+:"=r"(cy),"=r"(_c[0]):"0"(cy),"1"(_c[0]):"cc");
 
 #elif defined(TFM_PPC64)
 
@@ -740,7 +736,7 @@ __asm__(                                                     \
      "addq  %%rax,%0     \n\t"                            \
      "adcq  %%rdx,%1     \n\t"                            \
      "adcq  $0,%2        \n\t"                            \
-     :"=r"(c0), "=r"(c1), "=r"(c2): "0"(c0), "1"(c1), "2"(c2), "g"(i) :"%rax","%rdx","cc");
+     :"=r"(c0), "=r"(c1), "=r"(c2): "0"(c0), "1"(c1), "2"(c2), "x"(i) :"%rax","%rdx","cc");
 
 #define SQRADD2(i, j)                                     \
 __asm__(                                                     \
@@ -1211,46 +1207,46 @@ __asm__(                              \
     #include "fp_sqr_comba_small_set.i"
 #endif
 
-#if defined(TFM_SQR3)
+#if defined(TFM_SQR3) && FP_SIZE >= 6
     #include "fp_sqr_comba_3.i"
 #endif
-#if defined(TFM_SQR4)
+#if defined(TFM_SQR4) && FP_SIZE >= 8
     #include "fp_sqr_comba_4.i"
 #endif
-#if defined(TFM_SQR6)
+#if defined(TFM_SQR6) && FP_SIZE >= 12
     #include "fp_sqr_comba_6.i"
 #endif
-#if defined(TFM_SQR7)
+#if defined(TFM_SQR7) && FP_SIZE >= 14
     #include "fp_sqr_comba_7.i"
 #endif
-#if defined(TFM_SQR8)
+#if defined(TFM_SQR8) && FP_SIZE >= 16
     #include "fp_sqr_comba_8.i"
 #endif
-#if defined(TFM_SQR9)
+#if defined(TFM_SQR9) && FP_SIZE >= 18
     #include "fp_sqr_comba_9.i"
 #endif
-#if defined(TFM_SQR12)
+#if defined(TFM_SQR12) && FP_SIZE >= 24
     #include "fp_sqr_comba_12.i"
 #endif
-#if defined(TFM_SQR17)
+#if defined(TFM_SQR17) && FP_SIZE >= 34
     #include "fp_sqr_comba_17.i"
 #endif
-#if defined(TFM_SQR20)
+#if defined(TFM_SQR20) && FP_SIZE >= 40
     #include "fp_sqr_comba_20.i"
 #endif
-#if defined(TFM_SQR24)
+#if defined(TFM_SQR24) && FP_SIZE >= 48
     #include "fp_sqr_comba_24.i"
 #endif
-#if defined(TFM_SQR28)
+#if defined(TFM_SQR28) && FP_SIZE >= 56
     #include "fp_sqr_comba_28.i"
 #endif
-#if defined(TFM_SQR32)
+#if defined(TFM_SQR32) && FP_SIZE >= 64
     #include "fp_sqr_comba_32.i"
 #endif
-#if defined(TFM_SQR48)
+#if defined(TFM_SQR48) && FP_SIZE >= 96
     #include "fp_sqr_comba_48.i"
 #endif
-#if defined(TFM_SQR64)
+#if defined(TFM_SQR64) && FP_SIZE >= 128
     #include "fp_sqr_comba_64.i"
 #endif
 /* end fp_sqr_comba.c asm */
@@ -1572,46 +1568,46 @@ ____asm__(                             \
     #include "fp_mul_comba_small_set.i"
 #endif
 
-#if defined(TFM_MUL3)
+#if defined(TFM_MUL3) && FP_SIZE >= 6
     #include "fp_mul_comba_3.i"
 #endif
-#if defined(TFM_MUL4)
+#if defined(TFM_MUL4) && FP_SIZE >= 8
     #include "fp_mul_comba_4.i"
 #endif
-#if defined(TFM_MUL6)
+#if defined(TFM_MUL6) && FP_SIZE >= 12
     #include "fp_mul_comba_6.i"
 #endif
-#if defined(TFM_MUL7)
+#if defined(TFM_MUL7) && FP_SIZE >= 14
     #include "fp_mul_comba_7.i"
 #endif
-#if defined(TFM_MUL8)
+#if defined(TFM_MUL8) && FP_SIZE >= 16
     #include "fp_mul_comba_8.i"
 #endif
-#if defined(TFM_MUL9)
+#if defined(TFM_MUL9) && FP_SIZE >= 18
     #include "fp_mul_comba_9.i"
 #endif
-#if defined(TFM_MUL12)
+#if defined(TFM_MUL12) && FP_SIZE >= 24
     #include "fp_mul_comba_12.i"
 #endif
-#if defined(TFM_MUL17)
+#if defined(TFM_MUL17) && FP_SIZE >= 34
     #include "fp_mul_comba_17.i"
 #endif
-#if defined(TFM_MUL20)
+#if defined(TFM_MUL20) && FP_SIZE >= 40
     #include "fp_mul_comba_20.i"
 #endif
-#if defined(TFM_MUL24)
+#if defined(TFM_MUL24) && FP_SIZE >= 48
     #include "fp_mul_comba_24.i"
 #endif
-#if defined(TFM_MUL28)
+#if defined(TFM_MUL28) && FP_SIZE >= 56
     #include "fp_mul_comba_28.i"
 #endif
-#if defined(TFM_MUL32)
+#if defined(TFM_MUL32) && FP_SIZE >= 64
     #include "fp_mul_comba_32.i"
 #endif
-#if defined(TFM_MUL48)
+#if defined(TFM_MUL48) && FP_SIZE >= 96
     #include "fp_mul_comba_48.i"
 #endif
-#if defined(TFM_MUL64)
+#if defined(TFM_MUL64) && FP_SIZE >= 128
     #include "fp_mul_comba_64.i"
 #endif
 

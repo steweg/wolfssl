@@ -1366,6 +1366,13 @@ static int ProcessClientKeyExchange(const byte* input, int* sslBytes,
             wc_FreeRsaKey(&key);
             return -1;
         }
+        #ifdef WC_RSA_BLINDING
+            ret = wc_RsaSetRNG(&key, session->sslServer->rng);
+            if (ret != 0) {
+                SetError(RSA_DECRYPT_STR, error, session, FATAL_ERROR_STATE);
+                return -1;
+            }
+        #endif
         ret = wc_RsaPrivateDecrypt(input, length,
                   session->sslServer->arrays->preMasterSecret,SECRET_LEN, &key);
 
@@ -1560,7 +1567,7 @@ static int ProcessServerHello(const byte* input, int* sslBytes,
     if (doResume ) {
         int ret = 0;
         SSL_SESSION* resume = GetSession(session->sslServer,
-                                      session->sslServer->arrays->masterSecret);
+                                  session->sslServer->arrays->masterSecret, 0);
         if (resume == NULL) {
             SetError(BAD_SESSION_RESUME_STR, error, session, FATAL_ERROR_STATE);
             return -1;
@@ -1825,7 +1832,7 @@ static int ProcessFinished(const byte* input, int size, int* sslBytes,
                 
     if (ret == 0 && session->flags.cached == 0) {
         if (session->sslServer->options.haveSessionId) {
-            WOLFSSL_SESSION* sess = GetSession(session->sslServer, NULL);
+            WOLFSSL_SESSION* sess = GetSession(session->sslServer, NULL, 0);
             if (sess == NULL)
                 AddSession(session->sslServer);  /* don't re add */
             session->flags.cached = 1;

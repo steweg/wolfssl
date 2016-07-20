@@ -101,6 +101,9 @@ const char* wc_GetErrorString(int error)
     case MEMORY_E :
         return "out of memory error";
 
+    case VAR_STATE_CHANGE_E :
+        return "Variable state modified by different thread";
+
     case RSA_WRONG_TYPE_E :
         return "RSA wrong block type for RSA function";
 
@@ -379,6 +382,12 @@ const char* wc_GetErrorString(int error)
 
     case WC_KEY_SIZE_E:
         return "Key size error, either too small or large";
+
+    case ASN_COUNTRY_SIZE_E:
+        return "Country code size error, either too small or large";
+
+    case MISSING_RNG_E:
+        return "RNG required but not provided";
 
     default:
         return "unknown error number";

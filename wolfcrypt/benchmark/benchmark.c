@@ -62,6 +62,7 @@
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/asn.h>
 #include <wolfssl/wolfcrypt/ripemd.h>
+#include <wolfssl/wolfcrypt/cmac.h>
 #ifdef HAVE_ECC
     #include <wolfssl/wolfcrypt/ecc.h>
 #endif
@@ -85,6 +86,10 @@
     #include "libntruencrypt/ntru_crypto.h"
 #endif
 #include <wolfssl/wolfcrypt/random.h>
+
+#ifdef HAVE_WNR
+    const char* wnrConfigFile = "wnr-example.conf";
+#endif
 
 #if defined(WOLFSSL_MDK_ARM)
     extern FILE * wolfSSL_fopen(const char *fname, const char *mode) ;
@@ -153,6 +158,7 @@ void bench_sha256(void);
 void bench_sha384(void);
 void bench_sha512(void);
 void bench_ripemd(void);
+void bench_cmac(void);
 
 void bench_rsa(void);
 void bench_rsaKeyGen(void);
@@ -160,6 +166,9 @@ void bench_dh(void);
 #ifdef HAVE_ECC
 void bench_eccKeyGen(void);
 void bench_eccKeyAgree(void);
+    #ifdef HAVE_ECC_ENCRYPT
+    void bench_eccEncrypt(void);
+    #endif
 #endif
 #ifdef HAVE_CURVE25519
     void bench_curve25519KeyGen(void);
@@ -282,6 +291,13 @@ int benchmark_test(void *args)
     }
     #endif /* HAVE_CAVIUM */
 
+    #ifdef HAVE_WNR
+    if (wc_InitNetRandom(wnrConfigFile, NULL, 5000) != 0) {
+        printf("Whitewood netRandom config init failed\n");
+        exit(-1);
+    }
+    #endif /* HAVE_WNR */
+
 #if defined(HAVE_LOCAL_RNG)
     {
         int rngRet = wc_InitRng(&rng);
@@ -360,6 +376,9 @@ int benchmark_test(void *args)
 #ifdef HAVE_BLAKE2
     bench_blake2();
 #endif
+#ifdef WOLFSSL_CMAC
+    bench_cmac();
+#endif
 
     printf("\n");
 
@@ -383,6 +402,9 @@ int benchmark_test(void *args)
 #ifdef HAVE_ECC
     bench_eccKeyGen();
     bench_eccKeyAgree();
+    #ifdef HAVE_ECC_ENCRYPT
+        bench_eccEncrypt();
+    #endif
     #if defined(FP_ECC)
         wc_ecc_fp_free();
     #endif
@@ -402,6 +424,13 @@ int benchmark_test(void *args)
 
 #if defined(HAVE_LOCAL_RNG)
     wc_FreeRng(&rng);
+#endif
+
+#ifdef HAVE_WNR
+    if (wc_FreeNetRandom() < 0) {
+        printf("Failed to free netRandom context\n");
+        exit(-1);
+    }
 #endif
 
 #if defined(USE_WOLFSSL_MEMORY) && defined(WOLFSSL_TRACK_MEMORY)
@@ -1294,6 +1323,55 @@ void bench_blake2(void)
 #endif
 
 
+#ifdef WOLFSSL_CMAC
+
+void bench_cmac(void)
+{
+    Cmac    cmac;
+    byte    digest[AES_BLOCK_SIZE];
+    word32  digestSz = sizeof(digest);
+    double  start, total, persec;
+    int     i, ret;
+
+    ret = wc_InitCmac(&cmac, key, 16, WC_CMAC_AES, NULL);
+    if (ret != 0) {
+        printf("InitCmac failed, ret = %d\n", ret);
+        return;
+    }
+    start = current_time(1);
+    BEGIN_INTEL_CYCLES
+
+    for(i = 0; i < numBlocks; i++) {
+        ret = wc_CmacUpdate(&cmac, plain, sizeof(plain));
+        if (ret != 0) {
+            printf("CmacUpdate failed, ret = %d\n", ret);
+            return;
+        }
+    }
+
+    ret = wc_CmacFinal(&cmac, digest, &digestSz);
+    if (ret != 0) {
+        printf("CmacFinal failed, ret = %d\n", ret);
+        return;
+    }
+
+    END_INTEL_CYCLES
+    total = current_time(0) - start;
+    persec = 1 / total * numBlocks;
+#ifdef BENCH_EMBEDDED
+    /* since using kB, convert to MB/s */
+    persec = persec / 1024;
+#endif
+
+    printf("AES-CMAC %d %s took %5.3f seconds, %8.3f MB/s", numBlocks,
+                                              blockType, total, persec);
+    SHOW_INTEL_CYCLES
+    printf("\n");
+}
+
+#endif /* WOLFSSL_CMAC */
+
+
 #ifndef NO_RSA
 
 
@@ -1365,6 +1443,9 @@ void bench_rsa(void)
         return;
     }
 
+#ifdef WC_RSA_BLINDING
+    wc_RsaSetRNG(&rsaKey, &rng);
+#endif
     start = current_time(1);
 
     for (i = 0; i < ntimes; i++) {
@@ -1866,6 +1947,65 @@ void bench_eccKeyAgree(void)
     wc_ecc_free(&genKey2);
     wc_ecc_free(&genKey);
 }
+#ifdef HAVE_ECC_ENCRYPT
+void bench_eccEncrypt(void)
+{
+    ecc_key userA, userB;
+    byte    msg[48];
+    byte    out[80];
+    word32  outSz   = sizeof(out);
+    word32  plainSz = sizeof(plain);
+    int     ret, i;
+    double start, total, each, milliEach;
+
+    wc_ecc_init(&userA);
+    wc_ecc_init(&userB);
+
+    wc_ecc_make_key(&rng, 32, &userA);
+    wc_ecc_make_key(&rng, 32, &userB);
+
+    for (i = 0; i < (int)sizeof(msg); i++)
+        msg[i] = i;
+
+    start = current_time(1);
+
+    for(i = 0; i < ntimes; i++) {
+        /* encrypt msg to B */
+        ret = wc_ecc_encrypt(&userA, &userB, msg, sizeof(msg), out, &outSz, NULL);
+        if (ret != 0) {
+            printf("wc_ecc_encrypt failed! %d\n", ret);
+            return;
+        }
+    }
+
+    total = current_time(0) - start;
+    each  = total / ntimes;  /* per second  */
+    milliEach = each * 1000;   /* milliseconds */
+    printf("ECC      encrypt         %6.3f milliseconds, avg over %d"
+           " iterations\n", milliEach, ntimes);
+
+    start = current_time(1);
+
+    for(i = 0; i < ntimes; i++) {
+        /* decrypt msg from A */
+        ret = wc_ecc_decrypt(&userB, &userA, out, outSz, plain, &plainSz, NULL);
+        if (ret != 0) {
+            printf("wc_ecc_decrypt failed! %d\n", ret);
+            return;
+        }
+    }
+
+    total = current_time(0) - start;
+    each  = total / ntimes;  /* per second  */
+    milliEach = each * 1000;   /* milliseconds */
+    printf("ECC      decrypt         %6.3f milliseconds, avg over %d"
+           " iterations\n", milliEach, ntimes);
+
+    /* cleanup */
+    wc_ecc_free(&userB);
+    wc_ecc_free(&userA);
+}
+#endif
 #endif /* HAVE_ECC */
 
 #ifdef HAVE_CURVE25519

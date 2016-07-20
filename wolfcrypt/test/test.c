@@ -32,6 +32,28 @@
 
 #ifndef NO_CRYPT_TEST
 
+#if defined(WOLFSSL_STATIC_MEMORY) && !defined(HAVE_IO_POOL)
+    #ifndef HAVE_PKCS7
+        #define USE_CERT_BUFFERS_1024 /* avoid dynamic memory from fopen */
+    #endif
+    #include <wolfssl/wolfcrypt/memory.h>
+    #ifndef XMALLOC_USER
+        #define TEST_XMALLOC(s, h, t) XMALLOC((s),(h),(t))
+        #define TEST_XFREE(p, h, t)   XFREE((p),(h),(t))
+    #endif
+    #ifdef WOLFSSL_HEAP_TEST
+        #define HEAP_HINT (void*)WOLFSSL_HEAP_TEST
+    #else
+        #define HEAP_HINT NULL
+    #endif
+#else
+    /* only use XMALLOC and XFREE when testing static memory feature */
+   #define TEST_XMALLOC(s, h, t) ((void)h, (void)t, malloc((s)))
+   #define TEST_XFREE(p, h, t)   {void* xp = (p); if((xp)) free((xp));}
+   #define HEAP_HINT NULL
+#endif /* WOLFSSL_STATIC_MEMORY */
+
+
 #ifdef WOLFSSL_TEST_CERT
     #include <wolfssl/wolfcrypt/asn.h>
 #else
@@ -49,6 +71,7 @@
 #include <wolfssl/wolfcrypt/rsa.h>
 #include <wolfssl/wolfcrypt/des3.h>
 #include <wolfssl/wolfcrypt/aes.h>
+#include <wolfssl/wolfcrypt/cmac.h>
 #include <wolfssl/wolfcrypt/poly1305.h>
 #include <wolfssl/wolfcrypt/camellia.h>
 #include <wolfssl/wolfcrypt/hmac.h>
@@ -146,6 +169,10 @@
     #include "wolfssl/wolfcrypt/mem_track.h"
 #endif
 
+#ifdef HAVE_WNR
+    const char* wnrConfigFile = "wnr-example.conf";
+#endif
+
 
 typedef struct testVector {
     const char*  input;
@@ -176,6 +203,7 @@ int  chacha20_poly1305_aead_test(void);
 int  des_test(void);
 int  des3_test(void);
 int  aes_test(void);
+int  cmac_test(void);
 int  poly1305_test(void);
 int  aesgcm_test(void);
 int  gmac_test(void);
@@ -225,6 +253,9 @@ int idea_test(void);
 #define FOURK_BUF 4096
 
 
+#define ERROR_OUT(err, eLabel) { ret = (err); goto eLabel; }
+
+
 static int err_sys(const char* msg, int es)
 
 {
@@ -256,7 +287,6 @@ static void myFipsCb(int ok, int err, const char* hash)
 
 #endif /* HAVE_FIPS */
 
-
 int wolfcrypt_test(void* args)
 {
     int ret = 0;
@@ -266,6 +296,8 @@ int wolfcrypt_test(void* args)
 #if defined(USE_WOLFSSL_MEMORY) && defined(WOLFSSL_TRACK_MEMORY)
     InitMemoryTracker();
 #endif
+
+    wolfCrypt_Init();
 
 #ifdef HAVE_FIPS
     wolfCrypt_SetCb_fips(myFipsCb);
@@ -576,6 +608,13 @@ int wolfcrypt_test(void* args)
         printf( "ED25519  test passed!\n");
 #endif
 
+#if defined(WOLFSSL_CMAC) && !defined(NO_AES)
+    if ( (ret = cmac_test()) != 0)
+        return err_sys("CMAC     test failed!\n", ret);
+    else
+        printf( "CMAC     test passed!\n");
+#endif
+
 #ifdef HAVE_LIBZ
     if ( (ret = compress_test()) != 0)
         return err_sys("COMPRESS test failed!\n", ret);
@@ -646,6 +685,13 @@ static int OpenNitroxDevice(int dma_mode,int dev_id)
         }
 #endif /* HAVE_CAVIUM */
 
+#ifdef HAVE_WNR
+        if (wc_InitNetRandom(wnrConfigFile, NULL, 5000) != 0) {
+            err_sys("Whitewood netRandom global config failed", -1237);
+            return -1237;
+        }
+#endif
+
         args.argc = argc;
         args.argv = argv;
 
@@ -654,6 +700,11 @@ static int OpenNitroxDevice(int dma_mode,int dev_id)
 #ifdef HAVE_CAVIUM
         CspShutdown(CAVIUM_DEV_ID);
 #endif
+
+#ifdef HAVE_WNR
+        if (wc_FreeNetRandom() < 0)
+            err_sys("Failed to free netRandom context", -1238);
+#endif /* HAVE_WNR */
 
         return args.return_code;
     }
@@ -674,45 +725,45 @@ int md2_test()
     a.input  = "";
     a.output = "\x83\x50\xe5\xa3\xe2\x4c\x15\x3d\xf2\x27\x5c\x9f\x80\x69"
                "\x27\x73";
-    a.inLen  = strlen(a.input);
+    a.inLen  = XSTRLEN(a.input);
     a.outLen = MD2_DIGEST_SIZE;
 
     b.input  = "a";
     b.output = "\x32\xec\x01\xec\x4a\x6d\xac\x72\xc0\xab\x96\xfb\x34\xc0"
                "\xb5\xd1";
-    b.inLen  = strlen(b.input);
+    b.inLen  = XSTRLEN(b.input);
     b.outLen = MD2_DIGEST_SIZE;
 
     c.input  = "abc";
     c.output = "\xda\x85\x3b\x0d\x3f\x88\xd9\x9b\x30\x28\x3a\x69\xe6\xde"
                "\xd6\xbb";
-    c.inLen  = strlen(c.input);
+    c.inLen  = XSTRLEN(c.input);
     c.outLen = MD2_DIGEST_SIZE;
 
     d.input  = "message digest";
     d.output = "\xab\x4f\x49\x6b\xfb\x2a\x53\x0b\x21\x9f\xf3\x30\x31\xfe"
                "\x06\xb0";
-    d.inLen  = strlen(d.input);
+    d.inLen  = XSTRLEN(d.input);
     d.outLen = MD2_DIGEST_SIZE;
 
     e.input  = "abcdefghijklmnopqrstuvwxyz";
     e.output = "\x4e\x8d\xdf\xf3\x65\x02\x92\xab\x5a\x41\x08\xc3\xaa\x47"
                "\x94\x0b";
-    e.inLen  = strlen(e.input);
+    e.inLen  = XSTRLEN(e.input);
     e.outLen = MD2_DIGEST_SIZE;
 
     f.input  = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345"
                "6789";
     f.output = "\xda\x33\xde\xf2\xa4\x2d\xf1\x39\x75\x35\x28\x46\xc3\x03"
                "\x38\xcd";
-    f.inLen  = strlen(f.input);
+    f.inLen  = XSTRLEN(f.input);
     f.outLen = MD2_DIGEST_SIZE;
 
     g.input  = "1234567890123456789012345678901234567890123456789012345678"
                "9012345678901234567890";
     g.output = "\xd5\x97\x6f\x79\xd8\x3d\x3a\x0d\xc9\x80\x6c\x3c\x66\xf3"
                "\xef\xd8";
-    g.inLen  = strlen(g.input);
+    g.inLen  = XSTRLEN(g.input);
     g.outLen = MD2_DIGEST_SIZE;
 
     test_md2[0] = a;
@@ -729,7 +780,7 @@ int md2_test()
         wc_Md2Update(&md2, (byte*)test_md2[i].input, (word32)test_md2[i].inLen);
         wc_Md2Final(&md2, hash);
 
-        if (memcmp(hash, test_md2[i].output, MD2_DIGEST_SIZE) != 0)
+        if (XMEMCMP(hash, test_md2[i].output, MD2_DIGEST_SIZE) != 0)
             return -155 - i;
     }
 
@@ -750,33 +801,33 @@ int md5_test(void)
     a.input  = "abc";
     a.output = "\x90\x01\x50\x98\x3c\xd2\x4f\xb0\xd6\x96\x3f\x7d\x28\xe1\x7f"
                "\x72";
-    a.inLen  = strlen(a.input);
+    a.inLen  = XSTRLEN(a.input);
     a.outLen = MD5_DIGEST_SIZE;
 
     b.input  = "message digest";
     b.output = "\xf9\x6b\x69\x7d\x7c\xb7\x93\x8d\x52\x5a\x2f\x31\xaa\xf1\x61"
                "\xd0";
-    b.inLen  = strlen(b.input);
+    b.inLen  = XSTRLEN(b.input);
     b.outLen = MD5_DIGEST_SIZE;
 
     c.input  = "abcdefghijklmnopqrstuvwxyz";
     c.output = "\xc3\xfc\xd3\xd7\x61\x92\xe4\x00\x7d\xfb\x49\x6c\xca\x67\xe1"
                "\x3b";
-    c.inLen  = strlen(c.input);
+    c.inLen  = XSTRLEN(c.input);
     c.outLen = MD5_DIGEST_SIZE;
 
     d.input  = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345"
                "6789";
     d.output = "\xd1\x74\xab\x98\xd2\x77\xd9\xf5\xa5\x61\x1c\x2c\x9f\x41\x9d"
                "\x9f";
-    d.inLen  = strlen(d.input);
+    d.inLen  = XSTRLEN(d.input);
     d.outLen = MD5_DIGEST_SIZE;
 
     e.input  = "1234567890123456789012345678901234567890123456789012345678"
                "9012345678901234567890";
     e.output = "\x57\xed\xf4\xa2\x2b\xe3\xc9\x55\xac\x49\xda\x2e\x21\x07\xb6"
                "\x7a";
-    e.inLen  = strlen(e.input);
+    e.inLen  = XSTRLEN(e.input);
     e.outLen = MD5_DIGEST_SIZE;
 
     test_md5[0] = a;
@@ -791,7 +842,7 @@ int md5_test(void)
         wc_Md5Update(&md5, (byte*)test_md5[i].input, (word32)test_md5[i].inLen);
         wc_Md5Final(&md5, hash);
 
-        if (memcmp(hash, test_md5[i].output, MD5_DIGEST_SIZE) != 0)
+        if (XMEMCMP(hash, test_md5[i].output, MD5_DIGEST_SIZE) != 0)
             return -5 - i;
     }
 
@@ -814,45 +865,45 @@ int md4_test(void)
     a.input  = "";
     a.output = "\x31\xd6\xcf\xe0\xd1\x6a\xe9\x31\xb7\x3c\x59\xd7\xe0\xc0\x89"
                "\xc0";
-    a.inLen  = strlen(a.input);
+    a.inLen  = XSTRLEN(a.input);
     a.outLen = MD4_DIGEST_SIZE;
 
     b.input  = "a";
     b.output = "\xbd\xe5\x2c\xb3\x1d\xe3\x3e\x46\x24\x5e\x05\xfb\xdb\xd6\xfb"
                "\x24";
-    b.inLen  = strlen(b.input);
+    b.inLen  = XSTRLEN(b.input);
     b.outLen = MD4_DIGEST_SIZE;
 
     c.input  = "abc";
     c.output = "\xa4\x48\x01\x7a\xaf\x21\xd8\x52\x5f\xc1\x0a\xe8\x7a\xa6\x72"
                "\x9d";
-    c.inLen  = strlen(c.input);
+    c.inLen  = XSTRLEN(c.input);
     c.outLen = MD4_DIGEST_SIZE;
 
     d.input  = "message digest";
     d.output = "\xd9\x13\x0a\x81\x64\x54\x9f\xe8\x18\x87\x48\x06\xe1\xc7\x01"
                "\x4b";
-    d.inLen  = strlen(d.input);
+    d.inLen  = XSTRLEN(d.input);
     d.outLen = MD4_DIGEST_SIZE;
 
     e.input  = "abcdefghijklmnopqrstuvwxyz";
     e.output = "\xd7\x9e\x1c\x30\x8a\xa5\xbb\xcd\xee\xa8\xed\x63\xdf\x41\x2d"
                "\xa9";
-    e.inLen  = strlen(e.input);
+    e.inLen  = XSTRLEN(e.input);
     e.outLen = MD4_DIGEST_SIZE;
 
     f.input  = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345"
                "6789";
     f.output = "\x04\x3f\x85\x82\xf2\x41\xdb\x35\x1c\xe6\x27\xe1\x53\xe7\xf0"
                "\xe4";
-    f.inLen  = strlen(f.input);
+    f.inLen  = XSTRLEN(f.input);
     f.outLen = MD4_DIGEST_SIZE;
 
     g.input  = "1234567890123456789012345678901234567890123456789012345678"
                "9012345678901234567890";
     g.output = "\xe3\x3b\x4d\xdc\x9c\x38\xf2\x19\x9c\x3e\x7b\x16\x4f\xcc\x05"
                "\x36";
-    g.inLen  = strlen(g.input);
+    g.inLen  = XSTRLEN(g.input);
     g.outLen = MD4_DIGEST_SIZE;
 
     test_md4[0] = a;
@@ -869,7 +920,7 @@ int md4_test(void)
         wc_Md4Update(&md4, (byte*)test_md4[i].input, (word32)test_md4[i].inLen);
         wc_Md4Final(&md4, hash);
 
-        if (memcmp(hash, test_md4[i].output, MD4_DIGEST_SIZE) != 0)
+        if (XMEMCMP(hash, test_md4[i].output, MD4_DIGEST_SIZE) != 0)
             return -205 - i;
     }
 
@@ -893,20 +944,20 @@ int sha_test(void)
     a.input  = "abc";
     a.output = "\xA9\x99\x3E\x36\x47\x06\x81\x6A\xBA\x3E\x25\x71\x78\x50\xC2"
                "\x6C\x9C\xD0\xD8\x9D";
-    a.inLen  = strlen(a.input);
+    a.inLen  = XSTRLEN(a.input);
     a.outLen = SHA_DIGEST_SIZE;
 
     b.input  = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
     b.output = "\x84\x98\x3E\x44\x1C\x3B\xD2\x6E\xBA\xAE\x4A\xA1\xF9\x51\x29"
                "\xE5\xE5\x46\x70\xF1";
-    b.inLen  = strlen(b.input);
+    b.inLen  = XSTRLEN(b.input);
     b.outLen = SHA_DIGEST_SIZE;
 
     c.input  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                "aaaaaa";
     c.output = "\x00\x98\xBA\x82\x4B\x5C\x16\x42\x7B\xD7\xA1\x12\x2A\x5A\x44"
                "\x2A\x25\xEC\x64\x4D";
-    c.inLen  = strlen(c.input);
+    c.inLen  = XSTRLEN(c.input);
     c.outLen = SHA_DIGEST_SIZE;
 
     d.input  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -914,7 +965,7 @@ int sha_test(void)
                "aaaaaaaaaa";
     d.output = "\xAD\x5B\x3F\xDB\xCB\x52\x67\x78\xC2\x83\x9D\x2F\x15\x1E\xA7"
                "\x53\x99\x5E\x26\xA0";
-    d.inLen  = strlen(d.input);
+    d.inLen  = XSTRLEN(d.input);
     d.outLen = SHA_DIGEST_SIZE;
 
     test_sha[0] = a;
@@ -930,7 +981,7 @@ int sha_test(void)
         wc_ShaUpdate(&sha, (byte*)test_sha[i].input, (word32)test_sha[i].inLen);
         wc_ShaFinal(&sha, hash);
 
-        if (memcmp(hash, test_sha[i].output, SHA_DIGEST_SIZE) != 0)
+        if (XMEMCMP(hash, test_sha[i].output, SHA_DIGEST_SIZE) != 0)
             return -10 - i;
     }
 
@@ -952,26 +1003,26 @@ int ripemd_test(void)
     a.input  = "abc";
     a.output = "\x8e\xb2\x08\xf7\xe0\x5d\x98\x7a\x9b\x04\x4a\x8e\x98\xc6"
                "\xb0\x87\xf1\x5a\x0b\xfc";
-    a.inLen  = strlen(a.input);
+    a.inLen  = XSTRLEN(a.input);
     a.outLen = RIPEMD_DIGEST_SIZE;
 
     b.input  = "message digest";
     b.output = "\x5d\x06\x89\xef\x49\xd2\xfa\xe5\x72\xb8\x81\xb1\x23\xa8"
                "\x5f\xfa\x21\x59\x5f\x36";
-    b.inLen  = strlen(b.input);
+    b.inLen  = XSTRLEN(b.input);
     b.outLen = RIPEMD_DIGEST_SIZE;
 
     c.input  = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
     c.output = "\x12\xa0\x53\x38\x4a\x9c\x0c\x88\xe4\x05\xa0\x6c\x27\xdc"
                "\xf4\x9a\xda\x62\xeb\x2b";
-    c.inLen  = strlen(c.input);
+    c.inLen  = XSTRLEN(c.input);
     c.outLen = RIPEMD_DIGEST_SIZE;
 
     d.input  = "12345678901234567890123456789012345678901234567890123456"
                "789012345678901234567890";
     d.output = "\x9b\x75\x2e\x45\x57\x3d\x4b\x39\xf4\xdb\xd3\x32\x3c\xab"
                "\x82\xbf\x63\x32\x6b\xfb";
-    d.inLen  = strlen(d.input);
+    d.inLen  = XSTRLEN(d.input);
     d.outLen = RIPEMD_DIGEST_SIZE;
 
     test_ripemd[0] = a;
@@ -986,7 +1037,7 @@ int ripemd_test(void)
                      (word32)test_ripemd[i].inLen);
         wc_RipeMdFinal(&ripemd, hash);
 
-        if (memcmp(hash, test_ripemd[i].output, RIPEMD_DIGEST_SIZE) != 0)
+        if (XMEMCMP(hash, test_ripemd[i].output, RIPEMD_DIGEST_SIZE) != 0)
             return -10 - i;
     }
 
@@ -1059,7 +1110,7 @@ int blake2b_test(void)
         if (ret != 0)
             return -4004;
 
-        if (memcmp(digest, blake2b_vec[i], 64) != 0) {
+        if (XMEMCMP(digest, blake2b_vec[i], 64) != 0) {
             return -300 - i;
         }
     }
@@ -1084,14 +1135,14 @@ int sha256_test(void)
     a.output = "\xBA\x78\x16\xBF\x8F\x01\xCF\xEA\x41\x41\x40\xDE\x5D\xAE\x22"
                "\x23\xB0\x03\x61\xA3\x96\x17\x7A\x9C\xB4\x10\xFF\x61\xF2\x00"
                "\x15\xAD";
-    a.inLen  = strlen(a.input);
+    a.inLen  = XSTRLEN(a.input);
     a.outLen = SHA256_DIGEST_SIZE;
 
     b.input  = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
     b.output = "\x24\x8D\x6A\x61\xD2\x06\x38\xB8\xE5\xC0\x26\x93\x0C\x3E\x60"
                "\x39\xA3\x3C\xE4\x59\x64\xFF\x21\x67\xF6\xEC\xED\xD4\x19\xDB"
                "\x06\xC1";
-    b.inLen  = strlen(b.input);
+    b.inLen  = XSTRLEN(b.input);
     b.outLen = SHA256_DIGEST_SIZE;
 
     test_sha[0] = a;
@@ -1109,7 +1160,7 @@ int sha256_test(void)
         if (ret != 0)
             return -4007;
 
-        if (memcmp(hash, test_sha[i].output, SHA256_DIGEST_SIZE) != 0)
+        if (XMEMCMP(hash, test_sha[i].output, SHA256_DIGEST_SIZE) != 0)
             return -10 - i;
     }
 
@@ -1135,7 +1186,7 @@ int sha512_test(void)
                "\xd3\x9a\x21\x92\x99\x2a\x27\x4f\xc1\xa8\x36\xba\x3c\x23\xa3"
                "\xfe\xeb\xbd\x45\x4d\x44\x23\x64\x3c\xe8\x0e\x2a\x9a\xc9\x4f"
                "\xa5\x4c\xa4\x9f";
-    a.inLen  = strlen(a.input);
+    a.inLen  = XSTRLEN(a.input);
     a.outLen = SHA512_DIGEST_SIZE;
 
     b.input  = "abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhi"
@@ -1145,7 +1196,7 @@ int sha512_test(void)
                "\x90\x18\x50\x1d\x28\x9e\x49\x00\xf7\xe4\x33\x1b\x99\xde\xc4"
                "\xb5\x43\x3a\xc7\xd3\x29\xee\xb6\xdd\x26\x54\x5e\x96\xe5\x5b"
                "\x87\x4b\xe9\x09";
-    b.inLen  = strlen(b.input);
+    b.inLen  = XSTRLEN(b.input);
     b.outLen = SHA512_DIGEST_SIZE;
 
     test_sha[0] = a;
@@ -1164,7 +1215,7 @@ int sha512_test(void)
         if (ret != 0)
             return -4011;
 
-        if (memcmp(hash, test_sha[i].output, SHA512_DIGEST_SIZE) != 0)
+        if (XMEMCMP(hash, test_sha[i].output, SHA512_DIGEST_SIZE) != 0)
             return -10 - i;
     }
 
@@ -1189,7 +1240,7 @@ int sha384_test(void)
                "\x07\x27\x2c\x32\xab\x0e\xde\xd1\x63\x1a\x8b\x60\x5a\x43\xff"
                "\x5b\xed\x80\x86\x07\x2b\xa1\xe7\xcc\x23\x58\xba\xec\xa1\x34"
                "\xc8\x25\xa7";
-    a.inLen  = strlen(a.input);
+    a.inLen  = XSTRLEN(a.input);
     a.outLen = SHA384_DIGEST_SIZE;
 
     b.input  = "abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhi"
@@ -1198,7 +1249,7 @@ int sha384_test(void)
                "\x47\x53\x11\x1b\x17\x3b\x3b\x05\xd2\x2f\xa0\x80\x86\xe3\xb0"
                "\xf7\x12\xfc\xc7\xc7\x1a\x55\x7e\x2d\xb9\x66\xc3\xe9\xfa\x91"
                "\x74\x60\x39";
-    b.inLen  = strlen(b.input);
+    b.inLen  = XSTRLEN(b.input);
     b.outLen = SHA384_DIGEST_SIZE;
 
     test_sha[0] = a;
@@ -1217,7 +1268,7 @@ int sha384_test(void)
         if (ret != 0)
             return -4014;
 
-        if (memcmp(hash, test_sha[i].output, SHA384_DIGEST_SIZE) != 0)
+        if (XMEMCMP(hash, test_sha[i].output, SHA384_DIGEST_SIZE) != 0)
             return -10 - i;
     }
 
@@ -1248,13 +1299,13 @@ int hmac_md5_test(void)
     a.input  = "Hi There";
     a.output = "\x92\x94\x72\x7a\x36\x38\xbb\x1c\x13\xf4\x8e\xf8\x15\x8b\xfc"
                "\x9d";
-    a.inLen  = strlen(a.input);
+    a.inLen  = XSTRLEN(a.input);
     a.outLen = MD5_DIGEST_SIZE;
 
     b.input  = "what do ya want for nothing?";
     b.output = "\x75\x0c\x78\x3e\x6a\xb0\xb5\x03\xea\xa8\x6e\x31\x0a\x5d\xb7"
                "\x38";
-    b.inLen  = strlen(b.input);
+    b.inLen  = XSTRLEN(b.input);
     b.outLen = MD5_DIGEST_SIZE;
 
     c.input  = "\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD"
@@ -1263,7 +1314,7 @@ int hmac_md5_test(void)
                "\xDD\xDD\xDD\xDD\xDD\xDD";
     c.output = "\x56\xbe\x34\x52\x1d\x14\x4c\x88\xdb\xb8\xc7\x33\xf0\xe8\xb3"
                "\xf6";
-    c.inLen  = strlen(c.input);
+    c.inLen  = XSTRLEN(c.input);
     c.outLen = MD5_DIGEST_SIZE;
 
     test_hmac[0] = a;
@@ -1279,7 +1330,7 @@ int hmac_md5_test(void)
         if (wc_HmacInitCavium(&hmac, CAVIUM_DEV_ID) != 0)
             return -20009;
 #endif
-        ret = wc_HmacSetKey(&hmac, MD5, (byte*)keys[i], (word32)strlen(keys[i]));
+        ret = wc_HmacSetKey(&hmac, MD5, (byte*)keys[i], (word32)XSTRLEN(keys[i]));
         if (ret != 0)
             return -4015;
         ret = wc_HmacUpdate(&hmac, (byte*)test_hmac[i].input,
@@ -1290,7 +1341,7 @@ int hmac_md5_test(void)
         if (ret != 0)
             return -4017;
 
-        if (memcmp(hash, test_hmac[i].output, MD5_DIGEST_SIZE) != 0)
+        if (XMEMCMP(hash, test_hmac[i].output, MD5_DIGEST_SIZE) != 0)
             return -20 - i;
 #ifdef HAVE_CAVIUM
         wc_HmacFreeCavium(&hmac);
@@ -1325,13 +1376,13 @@ int hmac_sha_test(void)
     a.input  = "Hi There";
     a.output = "\xb6\x17\x31\x86\x55\x05\x72\x64\xe2\x8b\xc0\xb6\xfb\x37\x8c"
                "\x8e\xf1\x46\xbe\x00";
-    a.inLen  = strlen(a.input);
+    a.inLen  = XSTRLEN(a.input);
     a.outLen = SHA_DIGEST_SIZE;
 
     b.input  = "what do ya want for nothing?";
     b.output = "\xef\xfc\xdf\x6a\xe5\xeb\x2f\xa2\xd2\x74\x16\xd5\xf1\x84\xdf"
                "\x9c\x25\x9a\x7c\x79";
-    b.inLen  = strlen(b.input);
+    b.inLen  = XSTRLEN(b.input);
     b.outLen = SHA_DIGEST_SIZE;
 
     c.input  = "\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD"
@@ -1340,7 +1391,7 @@ int hmac_sha_test(void)
                "\xDD\xDD\xDD\xDD\xDD\xDD";
     c.output = "\x12\x5d\x73\x42\xb9\xac\x11\xcd\x91\xa3\x9a\xf4\x8a\xa1\x7b"
                "\x4f\x63\xf1\x75\xd3";
-    c.inLen  = strlen(c.input);
+    c.inLen  = XSTRLEN(c.input);
     c.outLen = SHA_DIGEST_SIZE;
 
     test_hmac[0] = a;
@@ -1356,7 +1407,7 @@ int hmac_sha_test(void)
         if (wc_HmacInitCavium(&hmac, CAVIUM_DEV_ID) != 0)
             return -20010;
 #endif
-        ret = wc_HmacSetKey(&hmac, SHA, (byte*)keys[i], (word32)strlen(keys[i]));
+        ret = wc_HmacSetKey(&hmac, SHA, (byte*)keys[i], (word32)XSTRLEN(keys[i]));
         if (ret != 0)
             return -4018;
         ret = wc_HmacUpdate(&hmac, (byte*)test_hmac[i].input,
@@ -1367,7 +1418,7 @@ int hmac_sha_test(void)
         if (ret != 0)
             return -4020;
 
-        if (memcmp(hash, test_hmac[i].output, SHA_DIGEST_SIZE) != 0)
+        if (XMEMCMP(hash, test_hmac[i].output, SHA_DIGEST_SIZE) != 0)
             return -20 - i;
 #ifdef HAVE_CAVIUM
         wc_HmacFreeCavium(&hmac);
@@ -1404,14 +1455,14 @@ int hmac_sha256_test(void)
     a.output = "\xb0\x34\x4c\x61\xd8\xdb\x38\x53\x5c\xa8\xaf\xce\xaf\x0b\xf1"
                "\x2b\x88\x1d\xc2\x00\xc9\x83\x3d\xa7\x26\xe9\x37\x6c\x2e\x32"
                "\xcf\xf7";
-    a.inLen  = strlen(a.input);
+    a.inLen  = XSTRLEN(a.input);
     a.outLen = SHA256_DIGEST_SIZE;
 
     b.input  = "what do ya want for nothing?";
     b.output = "\x5b\xdc\xc1\x46\xbf\x60\x75\x4e\x6a\x04\x24\x26\x08\x95\x75"
                "\xc7\x5a\x00\x3f\x08\x9d\x27\x39\x83\x9d\xec\x58\xb9\x64\xec"
                "\x38\x43";
-    b.inLen  = strlen(b.input);
+    b.inLen  = XSTRLEN(b.input);
     b.outLen = SHA256_DIGEST_SIZE;
 
     c.input  = "\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD"
@@ -1421,7 +1472,7 @@ int hmac_sha256_test(void)
     c.output = "\x77\x3e\xa9\x1e\x36\x80\x0e\x46\x85\x4d\xb8\xeb\xd0\x91\x81"
                "\xa7\x29\x59\x09\x8b\x3e\xf8\xc1\x22\xd9\x63\x55\x14\xce\xd5"
                "\x65\xfe";
-    c.inLen  = strlen(c.input);
+    c.inLen  = XSTRLEN(c.input);
     c.outLen = SHA256_DIGEST_SIZE;
 
     test_hmac[0] = a;
@@ -1437,7 +1488,7 @@ int hmac_sha256_test(void)
         if (wc_HmacInitCavium(&hmac, CAVIUM_DEV_ID) != 0)
             return -20011;
 #endif
-        ret = wc_HmacSetKey(&hmac, SHA256, (byte*)keys[i],(word32)strlen(keys[i]));
+        ret = wc_HmacSetKey(&hmac, SHA256, (byte*)keys[i],(word32)XSTRLEN(keys[i]));
         if (ret != 0)
             return -4021;
         ret = wc_HmacUpdate(&hmac, (byte*)test_hmac[i].input,
@@ -1448,7 +1499,7 @@ int hmac_sha256_test(void)
         if (ret != 0)
             return -4023;
 
-        if (memcmp(hash, test_hmac[i].output, SHA256_DIGEST_SIZE) != 0)
+        if (XMEMCMP(hash, test_hmac[i].output, SHA256_DIGEST_SIZE) != 0)
             return -20 - i;
 #ifdef HAVE_CAVIUM
         wc_HmacFreeCavium(&hmac);
@@ -1485,14 +1536,14 @@ int hmac_blake2b_test(void)
     a.output = "\x72\x93\x0d\xdd\xf5\xf7\xe1\x78\x38\x07\x44\x18\x0b\x3f\x51"
                "\x37\x25\xb5\x82\xc2\x08\x83\x2f\x1c\x99\xfd\x03\xa0\x16\x75"
                "\xac\xfd";
-    a.inLen  = strlen(a.input);
+    a.inLen  = XSTRLEN(a.input);
     a.outLen = BLAKE2B_256;
 
     b.input  = "what do ya want for nothing?";
     b.output = "\x3d\x20\x50\x71\x05\xc0\x8c\x0c\x38\x44\x1e\xf7\xf9\xd1\x67"
                "\x21\xff\x64\xf5\x94\x00\xcf\xf9\x75\x41\xda\x88\x61\x9d\x7c"
                "\xda\x2b";
-    b.inLen  = strlen(b.input);
+    b.inLen  = XSTRLEN(b.input);
     b.outLen = BLAKE2B_256;
 
     c.input  = "\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD"
@@ -1502,7 +1553,7 @@ int hmac_blake2b_test(void)
     c.output = "\xda\xfe\x2a\x24\xfc\xe7\xea\x36\x34\xbe\x41\x92\xc7\x11\xa7"
                "\x00\xae\x53\x9c\x11\x9c\x80\x74\x55\x22\x25\x4a\xb9\x55\xd3"
                "\x0f\x87";
-    c.inLen  = strlen(c.input);
+    c.inLen  = XSTRLEN(c.input);
     c.outLen = BLAKE2B_256;
 
     test_hmac[0] = a;
@@ -1519,7 +1570,7 @@ int hmac_blake2b_test(void)
             return -20011;
 #endif
         ret = wc_HmacSetKey(&hmac, BLAKE2B_ID, (byte*)keys[i],
-                         (word32)strlen(keys[i]));
+                         (word32)XSTRLEN(keys[i]));
         if (ret != 0)
             return -4024;
         ret = wc_HmacUpdate(&hmac, (byte*)test_hmac[i].input,
@@ -1530,7 +1581,7 @@ int hmac_blake2b_test(void)
         if (ret != 0)
             return -4026;
 
-        if (memcmp(hash, test_hmac[i].output, BLAKE2B_256) != 0)
+        if (XMEMCMP(hash, test_hmac[i].output, BLAKE2B_256) != 0)
             return -20 - i;
 #ifdef HAVE_CAVIUM
         wc_HmacFreeCavium(&hmac);
@@ -1568,7 +1619,7 @@ int hmac_sha384_test(void)
                "\x7f\x15\xf9\xda\xdb\xe4\x10\x1e\xc6\x82\xaa\x03\x4c\x7c\xeb"
                "\xc5\x9c\xfa\xea\x9e\xa9\x07\x6e\xde\x7f\x4a\xf1\x52\xe8\xb2"
                "\xfa\x9c\xb6";
-    a.inLen  = strlen(a.input);
+    a.inLen  = XSTRLEN(a.input);
     a.outLen = SHA384_DIGEST_SIZE;
 
     b.input  = "what do ya want for nothing?";
@@ -1576,7 +1627,7 @@ int hmac_sha384_test(void)
                "\x1b\x9c\x7e\xf4\x64\xf5\xa0\x1b\x47\xe4\x2e\xc3\x73\x63\x22"
                "\x44\x5e\x8e\x22\x40\xca\x5e\x69\xe2\xc7\x8b\x32\x39\xec\xfa"
                "\xb2\x16\x49";
-    b.inLen  = strlen(b.input);
+    b.inLen  = XSTRLEN(b.input);
     b.outLen = SHA384_DIGEST_SIZE;
 
     c.input  = "\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD"
@@ -1587,7 +1638,7 @@ int hmac_sha384_test(void)
                "\x6f\x0a\xa6\x35\xd9\x47\xac\x9f\xeb\xe8\x3e\xf4\xe5\x59\x66"
                "\x14\x4b\x2a\x5a\xb3\x9d\xc1\x38\x14\xb9\x4e\x3a\xb6\xe1\x01"
                "\xa3\x4f\x27";
-    c.inLen  = strlen(c.input);
+    c.inLen  = XSTRLEN(c.input);
     c.outLen = SHA384_DIGEST_SIZE;
 
     test_hmac[0] = a;
@@ -1599,7 +1650,7 @@ int hmac_sha384_test(void)
         if (i == 1)
             continue; /* fips not allowed */
 #endif
-        ret = wc_HmacSetKey(&hmac, SHA384, (byte*)keys[i],(word32)strlen(keys[i]));
+        ret = wc_HmacSetKey(&hmac, SHA384, (byte*)keys[i],(word32)XSTRLEN(keys[i]));
         if (ret != 0)
             return -4027;
         ret = wc_HmacUpdate(&hmac, (byte*)test_hmac[i].input,
@@ -1610,7 +1661,7 @@ int hmac_sha384_test(void)
         if (ret != 0)
             return -4029;
 
-        if (memcmp(hash, test_hmac[i].output, SHA384_DIGEST_SIZE) != 0)
+        if (XMEMCMP(hash, test_hmac[i].output, SHA384_DIGEST_SIZE) != 0)
             return -20 - i;
     }
 
@@ -1646,7 +1697,7 @@ int hmac_sha512_test(void)
                "\x7c\xde\xda\xa8\x33\xb7\xd6\xb8\xa7\x02\x03\x8b\x27\x4e\xae"
                "\xa3\xf4\xe4\xbe\x9d\x91\x4e\xeb\x61\xf1\x70\x2e\x69\x6c\x20"
                "\x3a\x12\x68\x54";
-    a.inLen  = strlen(a.input);
+    a.inLen  = XSTRLEN(a.input);
     a.outLen = SHA512_DIGEST_SIZE;
 
     b.input  = "what do ya want for nothing?";
@@ -1655,7 +1706,7 @@ int hmac_sha512_test(void)
                "\x05\x54\x97\x58\xbf\x75\xc0\x5a\x99\x4a\x6d\x03\x4f\x65\xf8"
                "\xf0\xe6\xfd\xca\xea\xb1\xa3\x4d\x4a\x6b\x4b\x63\x6e\x07\x0a"
                "\x38\xbc\xe7\x37";
-    b.inLen  = strlen(b.input);
+    b.inLen  = XSTRLEN(b.input);
     b.outLen = SHA512_DIGEST_SIZE;
 
     c.input  = "\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD\xDD"
@@ -1667,7 +1718,7 @@ int hmac_sha512_test(void)
                "\x9d\x39\xbf\x3e\x84\x82\x79\xa7\x22\xc8\x06\xb4\x85\xa4\x7e"
                "\x67\xc8\x07\xb9\x46\xa3\x37\xbe\xe8\x94\x26\x74\x27\x88\x59"
                "\xe1\x32\x92\xfb";
-    c.inLen  = strlen(c.input);
+    c.inLen  = XSTRLEN(c.input);
     c.outLen = SHA512_DIGEST_SIZE;
 
     test_hmac[0] = a;
@@ -1679,7 +1730,7 @@ int hmac_sha512_test(void)
         if (i == 1)
             continue; /* fips not allowed */
 #endif
-        ret = wc_HmacSetKey(&hmac, SHA512, (byte*)keys[i],(word32)strlen(keys[i]));
+        ret = wc_HmacSetKey(&hmac, SHA512, (byte*)keys[i],(word32)XSTRLEN(keys[i]));
         if (ret != 0)
             return -4030;
         ret = wc_HmacUpdate(&hmac, (byte*)test_hmac[i].input,
@@ -1690,7 +1741,7 @@ int hmac_sha512_test(void)
         if (ret != 0)
             return -4032;
 
-        if (memcmp(hash, test_hmac[i].output, SHA512_DIGEST_SIZE) != 0)
+        if (XMEMCMP(hash, test_hmac[i].output, SHA512_DIGEST_SIZE) != 0)
             return -20 - i;
     }
 
@@ -1746,7 +1797,7 @@ int arc4_test(void)
     for (i = 0; i < times; ++i) {
         Arc4 enc;
         Arc4 dec;
-        int  keylen = 8;  /* strlen with key 0x00 not good */
+        int  keylen = 8;  /* XSTRLEN with key 0x00 not good */
         if (i == 3)
             keylen = 4;
 
@@ -1764,10 +1815,10 @@ int arc4_test(void)
                     (word32)test_arc4[i].outLen);
         wc_Arc4Process(&dec, plain,  cipher, (word32)test_arc4[i].outLen);
 
-        if (memcmp(plain, test_arc4[i].input, test_arc4[i].outLen))
+        if (XMEMCMP(plain, test_arc4[i].input, test_arc4[i].outLen))
             return -20 - i;
 
-        if (memcmp(cipher, test_arc4[i].output, test_arc4[i].outLen))
+        if (XMEMCMP(cipher, test_arc4[i].output, test_arc4[i].outLen))
             return -20 - 5 - i;
 
 #ifdef HAVE_CAVIUM
@@ -1839,21 +1890,27 @@ int hc128_test(void)
         HC128 dec;
 
         /* align keys/ivs in plain/cipher buffers */
-        memcpy(plain,  keys[i], 16);
-        memcpy(cipher, ivs[i],  16);
+        XMEMCPY(plain,  keys[i], 16);
+        XMEMCPY(cipher, ivs[i],  16);
 
         wc_Hc128_SetKey(&enc, plain, cipher);
         wc_Hc128_SetKey(&dec, plain, cipher);
 
         /* align input */
-        memcpy(plain, test_hc128[i].input, test_hc128[i].outLen);
-        wc_Hc128_Process(&enc, cipher, plain,  (word32)test_hc128[i].outLen);
-        wc_Hc128_Process(&dec, plain,  cipher, (word32)test_hc128[i].outLen);
+        XMEMCPY(plain, test_hc128[i].input, test_hc128[i].outLen);
+        if (wc_Hc128_Process(&enc, cipher, plain,
+                                           (word32)test_hc128[i].outLen) != 0) {
+            return -110;
+        }
+        if (wc_Hc128_Process(&dec, plain, cipher, 
+                                           (word32)test_hc128[i].outLen) != 0) {
+            return -115;
+        }
 
-        if (memcmp(plain, test_hc128[i].input, test_hc128[i].outLen))
+        if (XMEMCMP(plain, test_hc128[i].input, test_hc128[i].outLen))
             return -120 - i;
 
-        if (memcmp(cipher, test_hc128[i].output, test_hc128[i].outLen))
+        if (XMEMCMP(cipher, test_hc128[i].output, test_hc128[i].outLen))
             return -120 - 5 - i;
     }
 
@@ -1912,9 +1969,9 @@ int rabbit_test(void)
         byte*  iv;
 
         /* align keys/ivs in plain/cipher buffers */
-        memcpy(plain,  keys[i], 16);
+        XMEMCPY(plain,  keys[i], 16);
         if (ivs[i]) {
-            memcpy(cipher, ivs[i],   8);
+            XMEMCPY(cipher, ivs[i],   8);
             iv = cipher;
         } else
             iv = NULL;
@@ -1922,14 +1979,14 @@ int rabbit_test(void)
         wc_RabbitSetKey(&dec, plain, iv);
 
         /* align input */
-        memcpy(plain, test_rabbit[i].input, test_rabbit[i].outLen);
+        XMEMCPY(plain, test_rabbit[i].input, test_rabbit[i].outLen);
         wc_RabbitProcess(&enc, cipher, plain,  (word32)test_rabbit[i].outLen);
         wc_RabbitProcess(&dec, plain,  cipher, (word32)test_rabbit[i].outLen);
 
-        if (memcmp(plain, test_rabbit[i].input, test_rabbit[i].outLen))
+        if (XMEMCMP(plain, test_rabbit[i].input, test_rabbit[i].outLen))
             return -130 - i;
 
-        if (memcmp(cipher, test_rabbit[i].output, test_rabbit[i].outLen))
+        if (XMEMCMP(cipher, test_rabbit[i].output, test_rabbit[i].outLen))
             return -130 - 5 - i;
     }
 
@@ -2192,7 +2249,7 @@ int poly1305_test(void)
         if (ret != 0)
             return -60;
 
-        if (memcmp(tag, tests[i], sizeof(tag)))
+        if (XMEMCMP(tag, tests[i], sizeof(tag)))
             return -61;
     }
 
@@ -2207,7 +2264,7 @@ int poly1305_test(void)
     if (ret != 0)
         return -63;
 
-    if (memcmp(tag, correct4, sizeof(tag)))
+    if (XMEMCMP(tag, correct4, sizeof(tag)))
         return -64;
 
     /* Check fail of TLS MAC function if altering additional data */
@@ -2218,7 +2275,7 @@ int poly1305_test(void)
     if (ret != 0)
         return -65;
 
-    if (memcmp(tag, correct4, sizeof(tag)) == 0)
+    if (XMEMCMP(tag, correct4, sizeof(tag)) == 0)
         return -66;
 
 
@@ -2530,10 +2587,10 @@ int des_test(void)
         return -32;
     wc_Des_CbcDecrypt(&dec, plain, cipher, sizeof(cipher));
 
-    if (memcmp(plain, vector, sizeof(plain)))
+    if (XMEMCMP(plain, vector, sizeof(plain)))
         return -33;
 
-    if (memcmp(cipher, verify, sizeof(cipher)))
+    if (XMEMCMP(cipher, verify, sizeof(cipher)))
         return -34;
 
     return 0;
@@ -2599,10 +2656,10 @@ int des3_test(void)
     if (ret != 0)
         return -34;
 
-    if (memcmp(plain, vector, sizeof(plain)))
+    if (XMEMCMP(plain, vector, sizeof(plain)))
         return -35;
 
-    if (memcmp(cipher, verify3, sizeof(cipher)))
+    if (XMEMCMP(cipher, verify3, sizeof(cipher)))
         return -36;
 
 #ifdef HAVE_CAVIUM
@@ -2663,10 +2720,10 @@ int aes_test(void)
     if (ret != 0)
         return -1006;
 
-    if (memcmp(plain, msg, AES_BLOCK_SIZE))
+    if (XMEMCMP(plain, msg, AES_BLOCK_SIZE))
         return -60;
 #endif /* HAVE_AES_DECRYPT */
-    if (memcmp(cipher, verify, AES_BLOCK_SIZE))
+    if (XMEMCMP(cipher, verify, AES_BLOCK_SIZE))
         return -61;
 
 #if defined(WOLFSSL_AESNI) && defined(HAVE_AES_DECRYPT)
@@ -2734,8 +2791,8 @@ int aes_test(void)
                  msgSz <= sizeof(bigMsg);
                  msgSz += AES_BLOCK_SIZE) {
 
-                memset(bigCipher, 0, sizeof(bigCipher));
-                memset(bigPlain, 0, sizeof(bigPlain));
+                XMEMSET(bigCipher, 0, sizeof(bigCipher));
+                XMEMSET(bigPlain, 0, sizeof(bigPlain));
                 ret = wc_AesSetKey(&enc, bigKey, keySz, iv, AES_ENCRYPTION);
                 if (ret != 0)
                     return -1030;
@@ -2750,7 +2807,7 @@ int aes_test(void)
                 if (ret != 0)
                     return -1033;
 
-                if (memcmp(bigPlain, bigMsg, msgSz))
+                if (XMEMCMP(bigPlain, bigMsg, msgSz))
                     return -1034;
             }
         }
@@ -2815,10 +2872,10 @@ int aes_test(void)
         wc_AesCtrEncrypt(&enc, cipher, ctrPlain, AES_BLOCK_SIZE*4);
         wc_AesCtrEncrypt(&dec, plain, cipher, AES_BLOCK_SIZE*4);
 
-        if (memcmp(plain, ctrPlain, AES_BLOCK_SIZE*4))
+        if (XMEMCMP(plain, ctrPlain, AES_BLOCK_SIZE*4))
             return -66;
 
-        if (memcmp(cipher, ctrCipher, AES_BLOCK_SIZE*4))
+        if (XMEMCMP(cipher, ctrCipher, AES_BLOCK_SIZE*4))
             return -67;
 
         /* let's try with just 9 bytes, non block size test */
@@ -2829,25 +2886,25 @@ int aes_test(void)
         wc_AesCtrEncrypt(&enc, cipher, ctrPlain, 9);
         wc_AesCtrEncrypt(&dec, plain, cipher, 9);
 
-        if (memcmp(plain, ctrPlain, 9))
+        if (XMEMCMP(plain, ctrPlain, 9))
             return -68;
 
-        if (memcmp(cipher, ctrCipher, 9))
+        if (XMEMCMP(cipher, ctrCipher, 9))
             return -69;
 
         /* and an additional 9 bytes to reuse tmp left buffer */
         wc_AesCtrEncrypt(&enc, cipher, ctrPlain, 9);
         wc_AesCtrEncrypt(&dec, plain, cipher, 9);
 
-        if (memcmp(plain, ctrPlain, 9))
+        if (XMEMCMP(plain, ctrPlain, 9))
             return -70;
 
-        if (memcmp(cipher, oddCipher, 9))
+        if (XMEMCMP(cipher, oddCipher, 9))
             return -71;
     }
 #endif /* WOLFSSL_AES_COUNTER */
 
-#if defined(WOLFSSL_AESNI) && defined(WOLFSSL_AES_DIRECT)
+#ifdef WOLFSSL_AES_DIRECT
     {
         const byte niPlain[] =
         {
@@ -2885,10 +2942,11 @@ int aes_test(void)
         if (XMEMCMP(plain, niPlain, AES_BLOCK_SIZE) != 0)
             return -20007;
     }
-#endif /* WOLFSSL_AESNI && WOLFSSL_AES_DIRECT */
+#endif /* WOLFSSL_AES_DIRECT */
 
     return ret;
 }
+
 
 #ifdef HAVE_AESGCM
 int aesgcm_test(void)
@@ -2996,45 +3054,45 @@ int aesgcm_test(void)
     byte resultC[sizeof(p)];
     int  result;
 
-    memset(resultT, 0, sizeof(resultT));
-    memset(resultC, 0, sizeof(resultC));
-    memset(resultP, 0, sizeof(resultP));
+    XMEMSET(resultT, 0, sizeof(resultT));
+    XMEMSET(resultC, 0, sizeof(resultC));
+    XMEMSET(resultP, 0, sizeof(resultP));
 
     wc_AesGcmSetKey(&enc, k1, sizeof(k1));
     /* AES-GCM encrypt and decrypt both use AES encrypt internally */
     wc_AesGcmEncrypt(&enc, resultC, p, sizeof(p), iv1, sizeof(iv1),
                                         resultT, sizeof(resultT), a, sizeof(a));
-    if (memcmp(c1, resultC, sizeof(resultC)))
+    if (XMEMCMP(c1, resultC, sizeof(resultC)))
         return -68;
-    if (memcmp(t1, resultT, sizeof(resultT)))
+    if (XMEMCMP(t1, resultT, sizeof(resultT)))
         return -69;
 
     result = wc_AesGcmDecrypt(&enc, resultP, resultC, sizeof(resultC),
                       iv1, sizeof(iv1), resultT, sizeof(resultT), a, sizeof(a));
     if (result != 0)
         return -70;
-    if (memcmp(p, resultP, sizeof(resultP)))
+    if (XMEMCMP(p, resultP, sizeof(resultP)))
         return -71;
 
 #ifndef HAVE_FIPS
-    memset(resultT, 0, sizeof(resultT));
-    memset(resultC, 0, sizeof(resultC));
-    memset(resultP, 0, sizeof(resultP));
+    XMEMSET(resultT, 0, sizeof(resultT));
+    XMEMSET(resultC, 0, sizeof(resultC));
+    XMEMSET(resultP, 0, sizeof(resultP));
 
     wc_AesGcmSetKey(&enc, k2, sizeof(k2));
     /* AES-GCM encrypt and decrypt both use AES encrypt internally */
     wc_AesGcmEncrypt(&enc, resultC, p, sizeof(p), iv2, sizeof(iv2),
                                         resultT, sizeof(resultT), a, sizeof(a));
-    if (memcmp(c2, resultC, sizeof(resultC)))
+    if (XMEMCMP(c2, resultC, sizeof(resultC)))
         return -230;
-    if (memcmp(t2, resultT, sizeof(resultT)))
+    if (XMEMCMP(t2, resultT, sizeof(resultT)))
         return -231;
 
     result = wc_AesGcmDecrypt(&enc, resultP, resultC, sizeof(resultC),
                       iv2, sizeof(iv2), resultT, sizeof(resultT), a, sizeof(a));
     if (result != 0)
         return -232;
-    if (memcmp(p, resultP, sizeof(resultP)))
+    if (XMEMCMP(p, resultP, sizeof(resultP)))
         return -233;
 #endif /* HAVE_FIPS */
 
@@ -3109,22 +3167,22 @@ int gmac_test(void)
 
     byte tag[16];
 
-    memset(tag, 0, sizeof(tag));
+    XMEMSET(tag, 0, sizeof(tag));
     wc_GmacSetKey(&gmac, k1, sizeof(k1));
     wc_GmacUpdate(&gmac, iv1, sizeof(iv1), a1, sizeof(a1), tag, sizeof(t1));
-    if (memcmp(t1, tag, sizeof(t1)) != 0)
+    if (XMEMCMP(t1, tag, sizeof(t1)) != 0)
         return -126;
 
-    memset(tag, 0, sizeof(tag));
+    XMEMSET(tag, 0, sizeof(tag));
     wc_GmacSetKey(&gmac, k2, sizeof(k2));
     wc_GmacUpdate(&gmac, iv2, sizeof(iv2), a2, sizeof(a2), tag, sizeof(t2));
-    if (memcmp(t2, tag, sizeof(t2)) != 0)
+    if (XMEMCMP(t2, tag, sizeof(t2)) != 0)
         return -127;
 
-    memset(tag, 0, sizeof(tag));
+    XMEMSET(tag, 0, sizeof(tag));
     wc_GmacSetKey(&gmac, k3, sizeof(k3));
     wc_GmacUpdate(&gmac, iv3, sizeof(iv3), a3, sizeof(a3), tag, sizeof(t3));
-    if (memcmp(t3, tag, sizeof(t3)) != 0)
+    if (XMEMCMP(t3, tag, sizeof(t3)) != 0)
         return -128;
 
     return 0;
@@ -3181,9 +3239,9 @@ int aesccm_test(void)
 
     int result;
 
-    memset(t2, 0, sizeof(t2));
-    memset(c2, 0, sizeof(c2));
-    memset(p2, 0, sizeof(p2));
+    XMEMSET(t2, 0, sizeof(t2));
+    XMEMSET(c2, 0, sizeof(c2));
+    XMEMSET(p2, 0, sizeof(p2));
 
     wc_AesCcmSetKey(&enc, k, sizeof(k));
     /* AES-CCM encrypt and decrypt both use AES encrypt internally */
@@ -3191,16 +3249,16 @@ int aesccm_test(void)
                                                  t2, sizeof(t2), a, sizeof(a));
     if (result != 0)
         return -106;
-    if (memcmp(c, c2, sizeof(c2)))
+    if (XMEMCMP(c, c2, sizeof(c2)))
         return -107;
-    if (memcmp(t, t2, sizeof(t2)))
+    if (XMEMCMP(t, t2, sizeof(t2)))
         return -108;
 
     result = wc_AesCcmDecrypt(&enc, p2, c2, sizeof(p2), iv, sizeof(iv),
                                                  t2, sizeof(t2), a, sizeof(a));
     if (result != 0)
         return -109;
-    if (memcmp(p, p2, sizeof(p2)))
+    if (XMEMCMP(p, p2, sizeof(p2)))
         return -110;
 
     /* Test the authentication failure */
@@ -3212,8 +3270,8 @@ int aesccm_test(void)
 
     /* Clear c2 to compare against p2. p2 should be set to zero in case of
      * authentication fail. */
-    memset(c2, 0, sizeof(c2));
-    if (memcmp(p2, c2, sizeof(p2)))
+    XMEMSET(c2, 0, sizeof(c2));
+    if (XMEMCMP(p2, c2, sizeof(p2)))
         return -112;
 
     return 0;
@@ -3372,24 +3430,24 @@ int camellia_test(void)
         switch (testVectors[i].type) {
             case CAM_ECB_ENC:
                 wc_CamelliaEncryptDirect(&cam, out, testVectors[i].plaintext);
-                if (memcmp(out, testVectors[i].ciphertext, CAMELLIA_BLOCK_SIZE))
+                if (XMEMCMP(out, testVectors[i].ciphertext, CAMELLIA_BLOCK_SIZE))
                     return testVectors[i].errorCode;
                 break;
             case CAM_ECB_DEC:
                 wc_CamelliaDecryptDirect(&cam, out, testVectors[i].ciphertext);
-                if (memcmp(out, testVectors[i].plaintext, CAMELLIA_BLOCK_SIZE))
+                if (XMEMCMP(out, testVectors[i].plaintext, CAMELLIA_BLOCK_SIZE))
                     return testVectors[i].errorCode;
                 break;
             case CAM_CBC_ENC:
                 wc_CamelliaCbcEncrypt(&cam, out, testVectors[i].plaintext,
                                                            CAMELLIA_BLOCK_SIZE);
-                if (memcmp(out, testVectors[i].ciphertext, CAMELLIA_BLOCK_SIZE))
+                if (XMEMCMP(out, testVectors[i].ciphertext, CAMELLIA_BLOCK_SIZE))
                     return testVectors[i].errorCode;
                 break;
             case CAM_CBC_DEC:
                 wc_CamelliaCbcDecrypt(&cam, out, testVectors[i].ciphertext,
                                                            CAMELLIA_BLOCK_SIZE);
-                if (memcmp(out, testVectors[i].plaintext, CAMELLIA_BLOCK_SIZE))
+                if (XMEMCMP(out, testVectors[i].plaintext, CAMELLIA_BLOCK_SIZE))
                     return testVectors[i].errorCode;
                 break;
             default:
@@ -3489,7 +3547,7 @@ int idea_test(void)
 
     for (i = 0; i < IDEA_NB_TESTS; i++) {
         /* Set encryption key */
-        memset(&idea, 0, sizeof(Idea));
+        XMEMSET(&idea, 0, sizeof(Idea));
         ret = wc_IdeaSetKey(&idea, v_key[i], IDEA_KEY_SIZE,
                             NULL, IDEA_ENCRYPTION);
         if (ret != 0) {
@@ -3505,7 +3563,7 @@ int idea_test(void)
         }
 
         /* Set decryption key */
-        memset(&idea, 0, sizeof(Idea));
+        XMEMSET(&idea, 0, sizeof(Idea));
         ret = wc_IdeaSetKey(&idea, v_key[i], IDEA_KEY_SIZE,
                             NULL, IDEA_DECRYPTION);
         if (ret != 0) {
@@ -3521,7 +3579,7 @@ int idea_test(void)
         }
 
         /* Set encryption key */
-        memset(&idea, 0, sizeof(Idea));
+        XMEMSET(&idea, 0, sizeof(Idea));
         ret = wc_IdeaSetKey(&idea, v_key[i], IDEA_KEY_SIZE,
                             v_key[i], IDEA_ENCRYPTION);
         if (ret != 0) {
@@ -3529,16 +3587,16 @@ int idea_test(void)
             return -1;
         }
 
-        memset(msg_enc, 0, sizeof(msg_enc));
+        XMEMSET(msg_enc, 0, sizeof(msg_enc));
         ret = wc_IdeaCbcEncrypt(&idea, msg_enc, (byte *)message,
-                                (word32)strlen(message)+1);
+                                (word32)XSTRLEN(message)+1);
         if (ret != 0) {
             printf("wc_IdeaCbcEncrypt failed\n");
             return -1;
         }
 
         /* Set decryption key */
-        memset(&idea, 0, sizeof(Idea));
+        XMEMSET(&idea, 0, sizeof(Idea));
         ret = wc_IdeaSetKey(&idea, v_key[i], IDEA_KEY_SIZE,
                             v_key[i], IDEA_DECRYPTION);
         if (ret != 0) {
@@ -3546,15 +3604,15 @@ int idea_test(void)
             return -1;
         }
 
-        memset(msg_dec, 0, sizeof(msg_dec));
+        XMEMSET(msg_dec, 0, sizeof(msg_dec));
         ret = wc_IdeaCbcDecrypt(&idea, msg_dec, msg_enc,
-                                (word32)strlen(message)+1);
+                                (word32)XSTRLEN(message)+1);
         if (ret != 0) {
             printf("wc_IdeaCbcDecrypt failed\n");
             return -1;
         }
 
-        if (XMEMCMP(message, msg_dec, (word32)strlen(message))) {
+        if (XMEMCMP(message, msg_dec, (word32)XSTRLEN(message))) {
             printf("Bad CBC decryption\n");
             return -1;
         }
@@ -3562,7 +3620,7 @@ int idea_test(void)
 
     for (i = 0; i < IDEA_NB_TESTS_EXTRA; i++) {
         /* Set encryption key */
-        memset(&idea, 0, sizeof(Idea));
+        XMEMSET(&idea, 0, sizeof(Idea));
         ret = wc_IdeaSetKey(&idea, v_key[i], IDEA_KEY_SIZE,
                             NULL, IDEA_ENCRYPTION);
         if (ret != 0) {
@@ -3621,7 +3679,7 @@ int idea_test(void)
                 return -41;
 
             /* Set encryption key */
-            memset(&idea, 0, sizeof(Idea));
+            XMEMSET(&idea, 0, sizeof(Idea));
             ret = wc_IdeaSetKey(&idea, key, IDEA_KEY_SIZE, iv, IDEA_ENCRYPTION);
             if (ret != 0) {
                 printf("wc_IdeaSetKey (enc) failed\n");
@@ -3629,7 +3687,7 @@ int idea_test(void)
             }
 
             /* Data encryption */
-            memset(enc, 0, sizeof(enc));
+            XMEMSET(enc, 0, sizeof(enc));
             ret = wc_IdeaCbcEncrypt(&idea, enc, rnd, sizeof(rnd));
             if (ret != 0) {
                 printf("wc_IdeaCbcEncrypt failed\n");
@@ -3637,7 +3695,7 @@ int idea_test(void)
             }
 
             /* Set decryption key */
-            memset(&idea, 0, sizeof(Idea));
+            XMEMSET(&idea, 0, sizeof(Idea));
             ret = wc_IdeaSetKey(&idea, key, IDEA_KEY_SIZE, iv, IDEA_DECRYPTION);
             if (ret != 0) {
                 printf("wc_IdeaSetKey (enc) failed\n");
@@ -3645,7 +3703,7 @@ int idea_test(void)
             }
 
             /* Data decryption */
-            memset(dec, 0, sizeof(dec));
+            XMEMSET(dec, 0, sizeof(dec));
             ret = wc_IdeaCbcDecrypt(&idea, dec, enc, sizeof(enc));
             if (ret != 0) {
                 printf("wc_IdeaCbcDecrypt failed\n");
@@ -3927,7 +3985,7 @@ int certext_test(void)
     byte kid_ca[] = "\x33\xD8\x45\x66\xD7\x68\x87\x18\x7E\x54"
                     "\x0D\x70\x27\x91\xC7\x26\xD7\x85\x65\xC0";
 
-    tmp = (byte*)malloc(FOURK_BUF);
+    tmp = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     if (tmp == NULL)
         return -200;
 
@@ -3938,7 +3996,7 @@ int certext_test(void)
     file = fopen("./othercert.der", "rb");
 #endif
     if (!file) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT ,DYNAMIC_TYPE_TMP_BUFFER);
         return -200;
     }
 
@@ -3989,7 +4047,7 @@ int certext_test(void)
     file = fopen("./certecc.der", "rb");
 #endif
     if (!file) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT ,DYNAMIC_TYPE_TMP_BUFFER);
         return -210;
     }
 
@@ -4043,7 +4101,7 @@ int certext_test(void)
     file = fopen("./cert.der", "rb");
 #endif
     if (!file) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT ,DYNAMIC_TYPE_TMP_BUFFER);
         return -220;
     }
 
@@ -4088,7 +4146,7 @@ int certext_test(void)
 #endif
 
     FreeDecodedCert(&cert);
-    free(tmp);
+    TEST_XFREE(tmp, HEAP_HINT ,DYNAMIC_TYPE_TMP_BUFFER);
 
     return 0;
 }
@@ -4106,7 +4164,7 @@ int rsa_test(void)
     word32 idx = 0;
     int    ret;
     byte   in[] = "Everyone gets Friday off.";
-    word32 inLen = (word32)strlen((char*)in);
+    word32 inLen = (word32)XSTRLEN((char*)in);
     byte   out[256];
     byte   plain[256];
 #if !defined(USE_CERT_BUFFERS_1024) && !defined(USE_CERT_BUFFERS_2048)
@@ -4116,7 +4174,7 @@ int rsa_test(void)
     DecodedCert cert;
 #endif
 
-    tmp = (byte*)malloc(FOURK_BUF);
+    tmp = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     if (tmp == NULL)
         return -40;
 
@@ -4132,7 +4190,7 @@ int rsa_test(void)
     if (!file) {
         err_sys("can't open ./certs/client-key.der, "
                 "Please run from wolfSSL home dir", -40);
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT ,DYNAMIC_TYPE_TMP_BUFFER);
         return -40;
     }
 
@@ -4144,48 +4202,59 @@ int rsa_test(void)
     wc_RsaInitCavium(&key, CAVIUM_DEV_ID);
 #endif
 
-    ret = wc_InitRsaKey(&key, 0);
+    ret = wc_InitRsaKey(&key, HEAP_HINT);
     if (ret != 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT ,DYNAMIC_TYPE_TMP_BUFFER);
         return -39;
     }
     ret = wc_RsaPrivateKeyDecode(tmp, &idx, &key, (word32)bytes);
     if (ret != 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT ,DYNAMIC_TYPE_TMP_BUFFER);
         return -41;
     }
     ret = wc_InitRng(&rng);
     if (ret != 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT ,DYNAMIC_TYPE_TMP_BUFFER);
         return -42;
     }
     ret = wc_RsaPublicEncrypt(in, inLen, out, sizeof(out), &key, &rng);
     if (ret < 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT ,DYNAMIC_TYPE_TMP_BUFFER);
         return -43;
     }
+#ifdef WC_RSA_BLINDING
+    {
+        int tmpret = ret;
+        ret = wc_RsaSetRNG(&key, &rng);
+        if (ret < 0) {
+            TEST_XFREE(tmp, HEAP_HINT ,DYNAMIC_TYPE_TMP_BUFFER);
+            return -843;
+        }
+        ret = tmpret;
+    }
+#endif
     ret = wc_RsaPrivateDecrypt(out, ret, plain, sizeof(plain), &key);
     if (ret < 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT ,DYNAMIC_TYPE_TMP_BUFFER);
         return -44;
     }
-    if (memcmp(plain, in, inLen)) {
-        free(tmp);
+    if (XMEMCMP(plain, in, inLen)) {
+        TEST_XFREE(tmp, HEAP_HINT ,DYNAMIC_TYPE_TMP_BUFFER);
         return -45;
     }
     ret = wc_RsaSSL_Sign(in, inLen, out, sizeof(out), &key, &rng);
     if (ret < 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT ,DYNAMIC_TYPE_TMP_BUFFER);
         return -46;
     }
-    memset(plain, 0, sizeof(plain));
+    XMEMSET(plain, 0, sizeof(plain));
     ret = wc_RsaSSL_Verify(out, ret, plain, sizeof(plain), &key);
     if (ret < 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT ,DYNAMIC_TYPE_TMP_BUFFER);
         return -47;
     }
-    if (memcmp(plain, in, ret)) {
-        free(tmp);
+    if (XMEMCMP(plain, in, ret)) {
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -48;
     }
 
@@ -4198,17 +4267,17 @@ int rsa_test(void)
     ret = wc_RsaPublicEncrypt_ex(in, inLen, out, sizeof(out), &key, &rng,
                        WC_RSA_OAEP_PAD, WC_HASH_TYPE_SHA, WC_MGF1SHA1, NULL, 0);
     if (ret < 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -143;
     }
     ret = wc_RsaPrivateDecrypt_ex(out, ret, plain, sizeof(plain), &key,
                        WC_RSA_OAEP_PAD, WC_HASH_TYPE_SHA, WC_MGF1SHA1, NULL, 0);
     if (ret < 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -144;
     }
     if (XMEMCMP(plain, in, inLen)) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -145;
     }
     #endif /* NO_SHA */
@@ -4218,17 +4287,17 @@ int rsa_test(void)
     ret = wc_RsaPublicEncrypt_ex(in, inLen, out, sizeof(out), &key, &rng,
                   WC_RSA_OAEP_PAD, WC_HASH_TYPE_SHA256, WC_MGF1SHA256, NULL, 0);
     if (ret < 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -243;
     }
     ret = wc_RsaPrivateDecrypt_ex(out, ret, plain, sizeof(plain), &key,
                   WC_RSA_OAEP_PAD, WC_HASH_TYPE_SHA256, WC_MGF1SHA256, NULL, 0);
     if (ret < 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -244;
     }
     if (XMEMCMP(plain, in, inLen)) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -245;
     }
 
@@ -4237,13 +4306,13 @@ int rsa_test(void)
     ret = wc_RsaPublicEncrypt_ex(in, inLen, out, sizeof(out), &key, &rng,
                   WC_RSA_OAEP_PAD, WC_HASH_TYPE_SHA256, WC_MGF1SHA256, NULL, 0);
     if (ret < 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -246;
     }
     ret = wc_RsaPrivateDecrypt_ex(out, ret, plain, sizeof(plain), &key,
            WC_RSA_OAEP_PAD, WC_HASH_TYPE_SHA256, WC_MGF1SHA256, in, sizeof(in));
     if (ret > 0) { /* in this case decrypt should fail */
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -247;
     }
 
@@ -4252,17 +4321,17 @@ int rsa_test(void)
     ret = wc_RsaPublicEncrypt_ex(in, inLen, out, sizeof(out), &key, &rng,
            WC_RSA_OAEP_PAD, WC_HASH_TYPE_SHA256, WC_MGF1SHA256, in, sizeof(in));
     if (ret < 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -248;
     }
     ret = wc_RsaPrivateDecrypt_ex(out, ret, plain, sizeof(plain), &key,
            WC_RSA_OAEP_PAD, WC_HASH_TYPE_SHA256, WC_MGF1SHA256, in, sizeof(in));
     if (ret < 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -249;
     }
     if (XMEMCMP(plain, in, inLen)) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -250;
     }
 
@@ -4272,13 +4341,13 @@ int rsa_test(void)
         ret = wc_RsaPublicEncrypt_ex(in, inLen, out, sizeof(out), &key, &rng,
                 WC_RSA_OAEP_PAD, WC_HASH_TYPE_SHA, WC_MGF1SHA1, in, sizeof(in));
         if (ret < 0) {
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -251;
         }
         ret = wc_RsaPrivateDecrypt_ex(out, ret, plain, sizeof(plain), &key,
            WC_RSA_OAEP_PAD, WC_HASH_TYPE_SHA256, WC_MGF1SHA256, in, sizeof(in));
         if (ret > 0) { /* should fail */
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -252;
         }
         #endif /* NO_SHA*/
@@ -4294,17 +4363,17 @@ int rsa_test(void)
         ret = wc_RsaPublicEncrypt_ex(in, inLen, out, sizeof(out), &key, &rng,
                   WC_RSA_OAEP_PAD, WC_HASH_TYPE_SHA512, WC_MGF1SHA512, NULL, 0);
         if (ret < 0) {
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -343;
         }
         ret = wc_RsaPrivateDecrypt_ex(out, ret, plain, sizeof(plain), &key,
                   WC_RSA_OAEP_PAD, WC_HASH_TYPE_SHA512, WC_MGF1SHA512, NULL, 0);
         if (ret < 0) {
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -344;
         }
         if (XMEMCMP(plain, in, inLen)) {
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -345;
         }
     }
@@ -4315,24 +4384,24 @@ int rsa_test(void)
     ret = wc_RsaPublicEncrypt_ex(in, inLen, out, sizeof(out), &key, &rng,
                   WC_RSA_PKCSV15_PAD, WC_HASH_TYPE_NONE, 0, NULL, 0);
     if (ret < 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -443;
     }
     ret = wc_RsaPrivateDecrypt_ex(out, ret, plain, sizeof(plain), &key,
                   WC_RSA_PKCSV15_PAD, WC_HASH_TYPE_NONE, 0, NULL, 0);
     if (ret < 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -444;
     }
     if (XMEMCMP(plain, in, inLen)) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -445;
     }
     #endif /* !HAVE_FAST_RSA && !HAVE_FIPS */
     #endif /* WC_NO_RSA_OAEP */
 
 #if defined(WOLFSSL_MDK_ARM)
-    #define sizeof(s) strlen((char *)(s))
+    #define sizeof(s) XSTRLEN((char *)(s))
 #endif
 
 #ifdef USE_CERT_BUFFERS_1024
@@ -4344,7 +4413,7 @@ int rsa_test(void)
 #else
     file2 = fopen(clientCert, "rb");
     if (!file2) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -49;
     }
 
@@ -4380,7 +4449,7 @@ int rsa_test(void)
     if (!file) {
         err_sys("can't open ./certs/client-keyPub.der, "
                 "Please run from wolfSSL home dir", -40);
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -50;
     }
 
@@ -4390,14 +4459,14 @@ int rsa_test(void)
 
     ret = wc_InitRsaKey(&keypub, 0);
     if (ret != 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -51;
     }
     idx = 0;
 
     ret = wc_RsaPublicKeyDecode(tmp, &idx, &keypub, (word32)bytes);
     if (ret != 0) {
-        free(tmp);
+        TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         wc_FreeRsaKey(&keypub);
         return -52;
     }
@@ -4414,36 +4483,36 @@ int rsa_test(void)
         FILE*  keyFile;
         FILE*  pemFile;
 
-        ret = wc_InitRsaKey(&genKey, 0);
+        ret = wc_InitRsaKey(&genKey, HEAP_HINT);
         if (ret != 0) {
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -300;
         }
         ret = wc_MakeRsaKey(&genKey, 1024, 65537, &rng);
         if (ret != 0) {
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -301;
         }
 
-        der = (byte*)malloc(FOURK_BUF);
+        der = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         if (der == NULL) {
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&genKey);
             return -307;
         }
-        pem = (byte*)malloc(FOURK_BUF);
+        pem = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         if (pem == NULL) {
-            free(tmp);
-            free(der);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&genKey);
             return -308;
         }
 
         derSz = wc_RsaKeyToDer(&genKey, der, FOURK_BUF);
         if (derSz < 0) {
-            free(der);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -302;
         }
 
@@ -4453,27 +4522,27 @@ int rsa_test(void)
         keyFile = fopen("./key.der", "wb");
 #endif
         if (!keyFile) {
-            free(der);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&genKey);
             return -303;
         }
         ret = (int)fwrite(der, 1, derSz, keyFile);
         fclose(keyFile);
         if (ret != derSz) {
-            free(der);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&genKey);
             return -313;
         }
 
         pemSz = wc_DerToPem(der, derSz, pem, FOURK_BUF, PRIVATEKEY_TYPE);
         if (pemSz < 0) {
-            free(der);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&genKey);
             return -304;
         }
@@ -4484,36 +4553,36 @@ int rsa_test(void)
         pemFile = fopen("./key.pem", "wb");
 #endif
         if (!pemFile) {
-            free(der);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&genKey);
             return -305;
         }
         ret = (int)fwrite(pem, 1, pemSz, pemFile);
         fclose(pemFile);
         if (ret != pemSz) {
-            free(der);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&genKey);
             return -314;
         }
 
-        ret = wc_InitRsaKey(&derIn, 0);
+        ret = wc_InitRsaKey(&derIn, HEAP_HINT);
         if (ret != 0) {
-            free(der);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&genKey);
             return -3060;
         }
         idx = 0;
         ret = wc_RsaPrivateKeyDecode(der, &idx, &derIn, derSz);
         if (ret != 0) {
-            free(der);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&derIn);
             wc_FreeRsaKey(&genKey);
             return -306;
@@ -4521,8 +4590,8 @@ int rsa_test(void)
 
         wc_FreeRsaKey(&derIn);
         wc_FreeRsaKey(&genKey);
-        free(pem);
-        free(der);
+        TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     }
 #endif /* WOLFSSL_KEY_GEN */
 
@@ -4540,15 +4609,16 @@ int rsa_test(void)
         DecodedCert decode;
 #endif
 
-        derCert = (byte*)malloc(FOURK_BUF);
+        derCert = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT,
+                                                       DYNAMIC_TYPE_TMP_BUFFER);
         if (derCert == NULL) {
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -309;
         }
-        pem = (byte*)malloc(FOURK_BUF);
+        pem = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT,DYNAMIC_TYPE_TMP_BUFFER);
         if (pem == NULL) {
-            free(tmp);
-            free(derCert);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -310;
         }
 
@@ -4574,44 +4644,44 @@ int rsa_test(void)
 
         /* add SKID from the Public Key */
         if (wc_SetSubjectKeyIdFromPublicKey(&myCert, &keypub, NULL) != 0) {
-            free(pem);
-            free(derCert);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -398;
         }
 
          /* add AKID from the Public Key */
          if (wc_SetAuthKeyIdFromPublicKey(&myCert, &keypub, NULL) != 0) {
-            free(pem);
-            free(derCert);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
              return -399;
         }
 
         /* add Key Usage */
         if (wc_SetKeyUsage(&myCert,"cRLSign,keyCertSign") != 0) {
-            free(pem);
-            free(derCert);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -400;
         }
 #endif /* WOLFSSL_CERT_EXT */
 
         certSz = wc_MakeSelfCert(&myCert, derCert, FOURK_BUF, &key, &rng);
         if (certSz < 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -401;
         }
 
 #ifdef WOLFSSL_TEST_CERT
-        InitDecodedCert(&decode, derCert, certSz, 0);
+        InitDecodedCert(&decode, derCert, certSz, HEAP_HINT);
         ret = ParseCert(&decode, CERT_TYPE, NO_VERIFY, 0);
         if (ret != 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -402;
         }
         FreeDecodedCert(&decode);
@@ -4623,25 +4693,25 @@ int rsa_test(void)
         derFile = fopen("./cert.der", "wb");
 #endif
         if (!derFile) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -403;
         }
         ret = (int)fwrite(derCert, 1, certSz, derFile);
         fclose(derFile);
         if (ret != certSz) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -414;
         }
 
         pemSz = wc_DerToPem(derCert, certSz, pem, FOURK_BUF, CERT_TYPE);
         if (pemSz < 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -404;
         }
 
@@ -4651,21 +4721,21 @@ int rsa_test(void)
         pemFile = fopen("./cert.pem", "wb");
 #endif
         if (!pemFile) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -405;
         }
         ret = (int)fwrite(pem, 1, pemSz, pemFile);
         fclose(pemFile);
         if (ret != pemSz) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -406;
         }
-        free(pem);
-        free(derCert);
+        TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     }
     /* CA style */
     {
@@ -4684,42 +4754,43 @@ int rsa_test(void)
         DecodedCert decode;
 #endif
 
-        derCert = (byte*)malloc(FOURK_BUF);
+        derCert = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT,
+                                                       DYNAMIC_TYPE_TMP_BUFFER);
         if (derCert == NULL) {
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -311;
         }
-        pem = (byte*)malloc(FOURK_BUF);
+        pem = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT,DYNAMIC_TYPE_TMP_BUFFER);
         if (pem == NULL) {
-            free(derCert);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -312;
         }
 
         file3 = fopen(caKeyFile, "rb");
 
         if (!file3) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -412;
         }
 
         bytes3 = fread(tmp, 1, FOURK_BUF, file3);
         fclose(file3);
 
-        ret = wc_InitRsaKey(&caKey, 0);
+        ret = wc_InitRsaKey(&caKey, HEAP_HINT);
         if (ret != 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -411;
         }
         ret = wc_RsaPrivateKeyDecode(tmp, &idx3, &caKey, (word32)bytes3);
         if (ret != 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&caKey);
             return -413;
         }
@@ -4746,43 +4817,43 @@ int rsa_test(void)
 
         /* add SKID from the Public Key */
         if (wc_SetSubjectKeyIdFromPublicKey(&myCert, &key, NULL) != 0) {
-            free(pem);
-            free(derCert);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -398;
         }
 
         /* add AKID from the CA certificate */
         if (wc_SetAuthKeyId(&myCert, caCertFile) != 0) {
-            free(pem);
-            free(derCert);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -399;
         }
 
         /* add Key Usage */
         if (wc_SetKeyUsage(&myCert,"keyEncipherment,keyAgreement") != 0) {
-            free(pem);
-            free(derCert);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -400;
         }
 #endif /* WOLFSSL_CERT_EXT */
 
         ret = wc_SetIssuer(&myCert, caCertFile);
         if (ret < 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&caKey);
             return -405;
         }
 
         certSz = wc_MakeCert(&myCert, derCert, FOURK_BUF, &key, NULL, &rng);
         if (certSz < 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&caKey);
             return -407;
         }
@@ -4790,20 +4861,20 @@ int rsa_test(void)
         certSz = wc_SignCert(myCert.bodySz, myCert.sigType, derCert, FOURK_BUF,
                           &caKey, NULL, &rng);
         if (certSz < 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&caKey);
             return -408;
         }
 
 #ifdef WOLFSSL_TEST_CERT
-        InitDecodedCert(&decode, derCert, certSz, 0);
+        InitDecodedCert(&decode, derCert, certSz, HEAP_HINT);
         ret = ParseCert(&decode, CERT_TYPE, NO_VERIFY, 0);
         if (ret != 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&caKey);
             return -409;
         }
@@ -4816,27 +4887,27 @@ int rsa_test(void)
         derFile = fopen("./othercert.der", "wb");
 #endif
         if (!derFile) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&caKey);
             return -410;
         }
         ret = (int)fwrite(derCert, 1, certSz, derFile);
         fclose(derFile);
         if (ret != certSz) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&caKey);
             return -416;
         }
 
         pemSz = wc_DerToPem(derCert, certSz, pem, FOURK_BUF, CERT_TYPE);
         if (pemSz < 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&caKey);
             return -411;
         }
@@ -4847,24 +4918,24 @@ int rsa_test(void)
         pemFile = fopen("./othercert.pem", "wb");
 #endif
         if (!pemFile) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&caKey);
             return -412;
         }
         ret = (int)fwrite(pem, 1, pemSz, pemFile);
         if (ret != pemSz) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             fclose(pemFile);
             wc_FreeRsaKey(&caKey);
             return -415;
         }
         fclose(pemFile);
-        free(pem);
-        free(derCert);
+        TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         wc_FreeRsaKey(&caKey);
     }
 #ifdef HAVE_ECC
@@ -4888,24 +4959,25 @@ int rsa_test(void)
         DecodedCert decode;
 #endif
 
-        derCert = (byte*)malloc(FOURK_BUF);
+        derCert = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT,
+                                                       DYNAMIC_TYPE_TMP_BUFFER);
         if (derCert == NULL) {
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -5311;
         }
-        pem = (byte*)malloc(FOURK_BUF);
+        pem = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT,DYNAMIC_TYPE_TMP_BUFFER);
         if (pem == NULL) {
-            free(derCert);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -5312;
         }
 
         file3 = fopen(eccCaKeyFile, "rb");
 
         if (!file3) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -5412;
         }
 
@@ -4915,9 +4987,9 @@ int rsa_test(void)
         wc_ecc_init(&caKey);
         ret = wc_EccPrivateKeyDecode(tmp, &idx3, &caKey, (word32)bytes3);
         if (ret != 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -5413;
         }
 
@@ -4943,9 +5015,9 @@ int rsa_test(void)
 
         file3 = fopen(eccCaKeyPubFile, "rb");
         if (!file3) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -5500;
         }
 
@@ -4954,36 +5026,36 @@ int rsa_test(void)
 
         wc_ecc_init(&caKeyPub);
         if (ret != 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -5501;
         }
 
         idx3 = 0;
         ret = wc_EccPublicKeyDecode(tmp, &idx3, &caKeyPub, (word32)bytes3);
         if (ret != 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_ecc_free(&caKeyPub);
             return -5502;
         }
 
         /* add SKID from the Public Key */
         if (wc_SetSubjectKeyIdFromPublicKey(&myCert, &key, NULL) != 0) {
-            free(pem);
-            free(derCert);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_ecc_free(&caKeyPub);
             return -5503;
         }
 
         /* add AKID from the Public Key */
         if (wc_SetAuthKeyIdFromPublicKey(&myCert, NULL, &caKeyPub) != 0) {
-            free(pem);
-            free(derCert);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_ecc_free(&caKeyPub);
             return -5504;
         }
@@ -4991,38 +5063,38 @@ int rsa_test(void)
 
         /* add Key Usage */
         if (wc_SetKeyUsage(&myCert,"digitalSignature,nonRepudiation") != 0) {
-            free(pem);
-            free(derCert);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -5505;
         }
 #endif /* WOLFSSL_CERT_EXT */
 
         ret = wc_SetIssuer(&myCert, eccCaCertFile);
         if (ret < 0) {
-            free(pem);
-            free(derCert);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_ecc_free(&caKey);
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -5405;
         }
 
         certSz = wc_MakeCert(&myCert, derCert, FOURK_BUF, &key, NULL, &rng);
         if (certSz < 0) {
-            free(pem);
-            free(derCert);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_ecc_free(&caKey);
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -5407;
         }
 
         certSz = wc_SignCert(myCert.bodySz, myCert.sigType, derCert, FOURK_BUF,
                           NULL, &caKey, &rng);
         if (certSz < 0) {
-            free(pem);
-            free(derCert);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_ecc_free(&caKey);
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -5408;
         }
 
@@ -5030,9 +5102,9 @@ int rsa_test(void)
         InitDecodedCert(&decode, derCert, certSz, 0);
         ret = ParseCert(&decode, CERT_TYPE, NO_VERIFY, 0);
         if (ret != 0) {
-            free(tmp);
-            free(pem);
-            free(derCert);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_ecc_free(&caKey);
             return -5409;
         }
@@ -5045,28 +5117,28 @@ int rsa_test(void)
         derFile = fopen("./certecc.der", "wb");
 #endif
         if (!derFile) {
-            free(pem);
-            free(derCert);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_ecc_free(&caKey);
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -5410;
         }
         ret = (int)fwrite(derCert, 1, certSz, derFile);
         fclose(derFile);
         if (ret != certSz) {
-            free(pem);
-            free(derCert);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_ecc_free(&caKey);
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -5414;
         }
 
         pemSz = wc_DerToPem(derCert, certSz, pem, FOURK_BUF, CERT_TYPE);
         if (pemSz < 0) {
-            free(pem);
-            free(derCert);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_ecc_free(&caKey);
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -5411;
         }
 
@@ -5076,24 +5148,24 @@ int rsa_test(void)
         pemFile = fopen("./certecc.pem", "wb");
 #endif
         if (!pemFile) {
-            free(pem);
-            free(derCert);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_ecc_free(&caKey);
-            free(tmp);
+            XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -5412;
         }
         ret = (int)fwrite(pem, 1, pemSz, pemFile);
         if (ret != pemSz) {
-            free(pem);
-            free(derCert);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_ecc_free(&caKey);
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -5415;
         }
 
         fclose(pemFile);
-        free(pem);
-        free(derCert);
+        XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         wc_ecc_free(&caKey);
     }
 #endif /* HAVE_ECC */
@@ -5113,15 +5185,16 @@ int rsa_test(void)
 #ifdef WOLFSSL_TEST_CERT
         DecodedCert decode;
 #endif
-        derCert = (byte*)malloc(FOURK_BUF);
+        derCert = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT,
+                                                       DYNAMIC_TYPE_TMP_BUFFER);
         if (derCert == NULL) {
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -311;
         }
-        pem = (byte*)malloc(FOURK_BUF);
+        pem = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT,DYNAMIC_TYPE_TMP_BUFFER);
         if (pem == NULL) {
-            free(derCert);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -312;
         }
 
@@ -5136,9 +5209,9 @@ int rsa_test(void)
         word32 rc = ntru_crypto_drbg_instantiate(112, pers_str,
                           sizeof(pers_str), GetEntropy, &drbg);
         if (rc != DRBG_OK) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -448;
         }
 
@@ -5146,9 +5219,9 @@ int rsa_test(void)
                                              &public_key_len, NULL,
                                              &private_key_len, NULL);
         if (rc != NTRU_OK) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -449;
         }
 
@@ -5156,27 +5229,27 @@ int rsa_test(void)
                                              &public_key_len, public_key,
                                              &private_key_len, private_key);
         if (rc != NTRU_OK) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -450;
         }
 
         rc = ntru_crypto_drbg_uninstantiate(drbg);
 
         if (rc != NTRU_OK) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -451;
         }
 
         caFile = fopen(caKeyFile, "rb");
 
         if (!caFile) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -452;
         }
 
@@ -5185,16 +5258,16 @@ int rsa_test(void)
 
         ret = wc_InitRsaKey(&caKey, 0);
         if (ret != 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -453;
         }
         ret = wc_RsaPrivateKeyDecode(tmp, &idx3, &caKey, (word32)bytes);
         if (ret != 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -454;
         }
 
@@ -5213,46 +5286,46 @@ int rsa_test(void)
         /* add SKID from the Public Key */
         if (wc_SetSubjectKeyIdFromNtruPublicKey(&myCert, public_key,
                                                 public_key_len) != 0) {
-            free(pem);
-            free(derCert);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -496;
         }
 
         /* add AKID from the CA certificate */
         if (wc_SetAuthKeyId(&myCert, caCertFile) != 0) {
-            free(pem);
-            free(derCert);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -495;
         }
 
         /* add Key Usage */
         if (wc_SetKeyUsage(&myCert,"digitalSignature,nonRepudiation,"
                                    "keyEncipherment,keyAgreement") != 0) {
-            free(pem);
-            free(derCert);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -494;
         }
 #endif /* WOLFSSL_CERT_EXT */
 
         ret = wc_SetIssuer(&myCert, caCertFile);
         if (ret < 0) {
-            free(derCert);
-            free(pem);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&caKey);
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -455;
         }
 
         certSz = wc_MakeNtruCert(&myCert, derCert, FOURK_BUF, public_key,
                               public_key_len, &rng);
         if (certSz < 0) {
-            free(derCert);
-            free(pem);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             wc_FreeRsaKey(&caKey);
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -456;
         }
 
@@ -5260,81 +5333,81 @@ int rsa_test(void)
                           &caKey, NULL, &rng);
         wc_FreeRsaKey(&caKey);
         if (certSz < 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -457;
         }
 
 
 #ifdef WOLFSSL_TEST_CERT
-        InitDecodedCert(&decode, derCert, certSz, 0);
+        InitDecodedCert(&decode, derCert, certSz, HEAP_HINT);
         ret = ParseCert(&decode, CERT_TYPE, NO_VERIFY, 0);
         if (ret != 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -458;
         }
         FreeDecodedCert(&decode);
 #endif
         derFile = fopen("./ntru-cert.der", "wb");
         if (!derFile) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -459;
         }
         ret = (int)fwrite(derCert, 1, certSz, derFile);
         fclose(derFile);
         if (ret != certSz) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -473;
         }
 
         pemSz = wc_DerToPem(derCert, certSz, pem, FOURK_BUF, CERT_TYPE);
         if (pemSz < 0) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -460;
         }
 
         pemFile = fopen("./ntru-cert.pem", "wb");
         if (!pemFile) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -461;
         }
         ret = (int)fwrite(pem, 1, pemSz, pemFile);
         fclose(pemFile);
         if (ret != pemSz) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -474;
         }
 
         ntruPrivFile = fopen("./ntru-key.raw", "wb");
         if (!ntruPrivFile) {
-            free(derCert);
-            free(pem);
-            free(tmp);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -462;
         }
         ret = (int)fwrite(private_key, 1, private_key_len, ntruPrivFile);
         fclose(ntruPrivFile);
         if (ret != private_key_len) {
-            free(pem);
-            free(derCert);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -475;
         }
-        free(pem);
-        free(derCert);
+        TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(derCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     }
 #endif /* HAVE_NTRU */
 #ifdef WOLFSSL_CERT_REQ
@@ -5346,15 +5419,15 @@ int rsa_test(void)
         int         pemSz;
         FILE*       reqFile;
 
-        der = (byte*)malloc(FOURK_BUF);
+        der = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT,DYNAMIC_TYPE_TMP_BUFFER);
         if (der == NULL) {
-            free(tmp);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -463;
         }
-        pem = (byte*)malloc(FOURK_BUF);
+        pem = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT,DYNAMIC_TYPE_TMP_BUFFER);
         if (pem == NULL) {
-            free(der);
-            free(tmp);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -464;
         }
 
@@ -5375,44 +5448,44 @@ int rsa_test(void)
 #ifdef WOLFSSL_CERT_EXT
         /* add SKID from the Public Key */
         if (wc_SetSubjectKeyIdFromPublicKey(&req, &keypub, NULL) != 0) {
-            free(pem);
-            free(der);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -496;
         }
 
         /* add Key Usage */
         if (wc_SetKeyUsage(&req,"digitalSignature,nonRepudiation,"
                                 "keyEncipherment,keyAgreement") != 0) {
-            free(pem);
-            free(der);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -494;
         }
 #endif /* WOLFSSL_CERT_EXT */
 
         derSz = wc_MakeCertReq(&req, der, FOURK_BUF, &key, NULL);
         if (derSz < 0) {
-            free(pem);
-            free(der);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -465;
         }
 
         derSz = wc_SignCert(req.bodySz, req.sigType, der, FOURK_BUF,
                           &key, NULL, &rng);
         if (derSz < 0) {
-            free(pem);
-            free(der);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -466;
         }
 
         pemSz = wc_DerToPem(der, derSz, pem, FOURK_BUF, CERTREQ_TYPE);
         if (pemSz < 0) {
-            free(pem);
-            free(der);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -467;
         }
 
@@ -5422,18 +5495,18 @@ int rsa_test(void)
         reqFile = fopen("./certreq.der", "wb");
 #endif
         if (!reqFile) {
-            free(pem);
-            free(der);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -468;
         }
 
         ret = (int)fwrite(der, 1, derSz, reqFile);
         fclose(reqFile);
         if (ret != derSz) {
-            free(pem);
-            free(der);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -471;
         }
 
@@ -5443,22 +5516,22 @@ int rsa_test(void)
         reqFile = fopen("./certreq.pem", "wb");
 #endif
         if (!reqFile) {
-            free(pem);
-            free(der);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -469;
         }
         ret = (int)fwrite(pem, 1, pemSz, reqFile);
         fclose(reqFile);
         if (ret != pemSz) {
-            free(pem);
-            free(der);
-            free(tmp);
+            TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -470;
         }
 
-        free(pem);
-        free(der);
+        TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     }
 #endif /* WOLFSSL_CERT_REQ */
 #endif /* WOLFSSL_CERT_GEN */
@@ -5470,7 +5543,7 @@ int rsa_test(void)
 #ifdef HAVE_CAVIUM
     wc_RsaFreeCavium(&key);
 #endif
-    free(tmp);
+    TEST_XFREE(tmp, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     wc_FreeRng(&rng);
 
     return 0;
@@ -5564,7 +5637,7 @@ int dh_test(void)
     if (ret != 0)
         return -55;
 
-    if (memcmp(agree, agree2, agreeSz))
+    if (XMEMCMP(agree, agree2, agreeSz))
         return -56;
 
     wc_FreeDhKey(&key);
@@ -5656,22 +5729,22 @@ int dsa_test(void)
     ret = wc_MakeDsaKey(&rng, &genKey);
     if (ret != 0) return -363;
 
-    der = (byte*)malloc(FOURK_BUF);
+    der = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     if (der == NULL) {
         wc_FreeDsaKey(&genKey);
         return -364;
     }
-    pem = (byte*)malloc(FOURK_BUF);
+    pem = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     if (pem == NULL) {
-        free(der);
+        TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         wc_FreeDsaKey(&genKey);
         return -365;
     }
 
     derSz = wc_DsaKeyToDer(&genKey, der, FOURK_BUF);
     if (derSz < 0) {
-        free(der);
-        free(pem);
+        TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -366;
     }
 
@@ -5681,24 +5754,24 @@ int dsa_test(void)
     keyFile = fopen("./key.der", "wb");
 #endif
     if (!keyFile) {
-        free(der);
-        free(pem);
+        TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         wc_FreeDsaKey(&genKey);
         return -367;
     }
     ret = (int)fwrite(der, 1, derSz, keyFile);
     fclose(keyFile);
     if (ret != derSz) {
-        free(der);
-        free(pem);
+        TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         wc_FreeDsaKey(&genKey);
         return -368;
     }
 
     pemSz = wc_DerToPem(der, derSz, pem, FOURK_BUF, DSA_PRIVATEKEY_TYPE);
     if (pemSz < 0) {
-        free(der);
-        free(pem);
+        TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         wc_FreeDsaKey(&genKey);
         return -369;
     }
@@ -5709,16 +5782,16 @@ int dsa_test(void)
     pemFile = fopen("./key.pem", "wb");
 #endif
     if (!pemFile) {
-        free(der);
-        free(pem);
+        TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         wc_FreeDsaKey(&genKey);
         return -370;
     }
     ret = (int)fwrite(pem, 1, pemSz, pemFile);
     fclose(pemFile);
     if (ret != pemSz) {
-        free(der);
-        free(pem);
+        TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         wc_FreeDsaKey(&genKey);
         return -371;
     }
@@ -5727,8 +5800,8 @@ int dsa_test(void)
     idx = 0;
     ret = wc_DsaPrivateKeyDecode(der, &idx, &derIn, derSz);
     if (ret != 0) {
-        free(der);
-        free(pem);
+        TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         wc_FreeDsaKey(&derIn);
         wc_FreeDsaKey(&genKey);
         return -373;
@@ -5736,8 +5809,8 @@ int dsa_test(void)
 
     wc_FreeDsaKey(&derIn);
     wc_FreeDsaKey(&genKey);
-    free(pem);
-    free(der);
+    TEST_XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    TEST_XFREE(der, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     }
 #endif /* WOLFSSL_KEY_GEN */
 
@@ -5804,6 +5877,11 @@ int srp_test(void)
 
     byte verifier[80];
     word32 v_size = sizeof(verifier);
+
+    /* set as 0's so if second init on srv not called SrpTerm is not on
+     * garbage values */
+    XMEMSET(&srv, 0, sizeof(Srp));
+    XMEMSET(&cli, 0, sizeof(Srp));
 
     /* generating random salt */
 
@@ -5879,7 +5957,7 @@ int openssl_test(void)
                "9012345678901234567890";
     a.output = "\x57\xed\xf4\xa2\x2b\xe3\xc9\x55\xac\x49\xda\x2e\x21\x07\xb6"
                "\x7a";
-    a.inLen  = strlen(a.input);
+    a.inLen  = XSTRLEN(a.input);
     a.outLen = MD5_DIGEST_SIZE;
 
     EVP_MD_CTX_init(&md_ctx);
@@ -5888,7 +5966,7 @@ int openssl_test(void)
     EVP_DigestUpdate(&md_ctx, a.input, (unsigned long)a.inLen);
     EVP_DigestFinal(&md_ctx, hash, 0);
 
-    if (memcmp(hash, a.output, MD5_DIGEST_SIZE) != 0)
+    if (XMEMCMP(hash, a.output, MD5_DIGEST_SIZE) != 0)
         return -71;
 
 #endif /* NO_MD5 */
@@ -5900,7 +5978,7 @@ int openssl_test(void)
                "aaaaaaaaaa";
     b.output = "\xAD\x5B\x3F\xDB\xCB\x52\x67\x78\xC2\x83\x9D\x2F\x15\x1E\xA7"
                "\x53\x99\x5E\x26\xA0";
-    b.inLen  = strlen(b.input);
+    b.inLen  = XSTRLEN(b.input);
     b.outLen = SHA_DIGEST_SIZE;
 
     EVP_MD_CTX_init(&md_ctx);
@@ -5909,7 +5987,7 @@ int openssl_test(void)
     EVP_DigestUpdate(&md_ctx, b.input, (unsigned long)b.inLen);
     EVP_DigestFinal(&md_ctx, hash, 0);
 
-    if (memcmp(hash, b.output, SHA_DIGEST_SIZE) != 0)
+    if (XMEMCMP(hash, b.output, SHA_DIGEST_SIZE) != 0)
         return -72;
 
 #endif /* NO_SHA */
@@ -5919,7 +5997,7 @@ int openssl_test(void)
     d.output = "\x24\x8D\x6A\x61\xD2\x06\x38\xB8\xE5\xC0\x26\x93\x0C\x3E\x60"
                "\x39\xA3\x3C\xE4\x59\x64\xFF\x21\x67\xF6\xEC\xED\xD4\x19\xDB"
                "\x06\xC1";
-    d.inLen  = strlen(d.input);
+    d.inLen  = XSTRLEN(d.input);
     d.outLen = SHA256_DIGEST_SIZE;
 
     EVP_MD_CTX_init(&md_ctx);
@@ -5928,7 +6006,7 @@ int openssl_test(void)
     EVP_DigestUpdate(&md_ctx, d.input, (unsigned long)d.inLen);
     EVP_DigestFinal(&md_ctx, hash, 0);
 
-    if (memcmp(hash, d.output, SHA256_DIGEST_SIZE) != 0)
+    if (XMEMCMP(hash, d.output, SHA256_DIGEST_SIZE) != 0)
         return -78;
 
 #ifdef WOLFSSL_SHA384
@@ -5939,7 +6017,7 @@ int openssl_test(void)
                "\x47\x53\x11\x1b\x17\x3b\x3b\x05\xd2\x2f\xa0\x80\x86\xe3\xb0"
                "\xf7\x12\xfc\xc7\xc7\x1a\x55\x7e\x2d\xb9\x66\xc3\xe9\xfa\x91"
                "\x74\x60\x39";
-    e.inLen  = strlen(e.input);
+    e.inLen  = XSTRLEN(e.input);
     e.outLen = SHA384_DIGEST_SIZE;
 
     EVP_MD_CTX_init(&md_ctx);
@@ -5948,7 +6026,7 @@ int openssl_test(void)
     EVP_DigestUpdate(&md_ctx, e.input, (unsigned long)e.inLen);
     EVP_DigestFinal(&md_ctx, hash, 0);
 
-    if (memcmp(hash, e.output, SHA384_DIGEST_SIZE) != 0)
+    if (XMEMCMP(hash, e.output, SHA384_DIGEST_SIZE) != 0)
         return -79;
 
 #endif /* WOLFSSL_SHA384 */
@@ -5963,7 +6041,7 @@ int openssl_test(void)
                "\x90\x18\x50\x1d\x28\x9e\x49\x00\xf7\xe4\x33\x1b\x99\xde\xc4"
                "\xb5\x43\x3a\xc7\xd3\x29\xee\xb6\xdd\x26\x54\x5e\x96\xe5\x5b"
                "\x87\x4b\xe9\x09";
-    f.inLen  = strlen(f.input);
+    f.inLen  = XSTRLEN(f.input);
     f.outLen = SHA512_DIGEST_SIZE;
 
     EVP_MD_CTX_init(&md_ctx);
@@ -5972,7 +6050,7 @@ int openssl_test(void)
     EVP_DigestUpdate(&md_ctx, f.input, (unsigned long)f.inLen);
     EVP_DigestFinal(&md_ctx, hash, 0);
 
-    if (memcmp(hash, f.output, SHA512_DIGEST_SIZE) != 0)
+    if (XMEMCMP(hash, f.output, SHA512_DIGEST_SIZE) != 0)
         return -80;
 
 #endif /* WOLFSSL_SHA512 */
@@ -5985,13 +6063,13 @@ int openssl_test(void)
     c.input  = "what do ya want for nothing?";
     c.output = "\x55\x78\xe8\x48\x4b\xcc\x93\x80\x93\xec\x53\xaf\x22\xd6\x14"
                "\x76";
-    c.inLen  = strlen(c.input);
+    c.inLen  = XSTRLEN(c.input);
     c.outLen = MD5_DIGEST_SIZE;
 
     HMAC(EVP_md5(),
                  "JefeJefeJefeJefe", 16, (byte*)c.input, (int)c.inLen, hash, 0);
 
-    if (memcmp(hash, c.output, MD5_DIGEST_SIZE) != 0)
+    if (XMEMCMP(hash, c.output, MD5_DIGEST_SIZE) != 0)
         return -74;
 
 #endif /* NO_MD5 */
@@ -6031,17 +6109,17 @@ int openssl_test(void)
     DES_cbc_encrypt(vector, cipher, sizeof(vector), &sched, &iv, DES_ENCRYPT);
     DES_cbc_encrypt(cipher, plain, sizeof(vector), &sched, &iv, DES_DECRYPT);
 
-    if (memcmp(plain, vector, sizeof(vector)) != 0)
+    if (XMEMCMP(plain, vector, sizeof(vector)) != 0)
         return -75;
 
-    if (memcmp(cipher, verify, sizeof(verify)) != 0)
+    if (XMEMCMP(cipher, verify, sizeof(verify)) != 0)
         return -76;
 
         /* test changing iv */
     DES_ncbc_encrypt(vector, cipher, 8, &sched, &iv, DES_ENCRYPT);
     DES_ncbc_encrypt(vector + 8, cipher + 8, 16, &sched, &iv, DES_ENCRYPT);
 
-    if (memcmp(cipher, verify, sizeof(verify)) != 0)
+    if (XMEMCMP(cipher, verify, sizeof(verify)) != 0)
         return -77;
 
     }  /* end des test */
@@ -6079,7 +6157,7 @@ int openssl_test(void)
         if (EVP_Cipher(&ctx, cipher, (byte*)msg, 16) == 0)
             return -82;
 
-        if (memcmp(cipher, verify, AES_BLOCK_SIZE))
+        if (XMEMCMP(cipher, verify, AES_BLOCK_SIZE))
             return -83;
 
         EVP_CIPHER_CTX_init(&ctx);
@@ -6089,7 +6167,7 @@ int openssl_test(void)
         if (EVP_Cipher(&ctx, plain, cipher, 16) == 0)
             return -85;
 
-        if (memcmp(plain, msg, AES_BLOCK_SIZE))
+        if (XMEMCMP(plain, msg, AES_BLOCK_SIZE))
             return -86;
 
 
@@ -6137,7 +6215,7 @@ int pkcs12_test(void)
     if (ret < 0)
         return -103;
 
-    if ( (ret = memcmp(derived, verify, kLen)) != 0)
+    if ( (ret = XMEMCMP(derived, verify, kLen)) != 0)
         return -104;
 
     iterations = 1000;
@@ -6146,8 +6224,13 @@ int pkcs12_test(void)
     if (ret < 0)
         return -105;
 
-    if ( (ret = memcmp(derived, verify2, 24)) != 0)
+    ret = wc_PKCS12_PBKDF_ex(derived, passwd2, sizeof(passwd2), salt2, 8,
+                                       iterations, kLen, SHA256, id, HEAP_HINT);
+    if (ret < 0)
         return -106;
+
+    if ( (ret = XMEMCMP(derived, verify2, 24)) != 0)
+        return -107;
 
     return 0;
 }
@@ -6166,12 +6249,12 @@ int pbkdf2_test(void)
         0x2d, 0xd4, 0xf9, 0x37, 0xd4, 0x95, 0x16, 0xa7, 0x2a, 0x9a, 0x21, 0xd1
     };
 
-    int ret = wc_PBKDF2(derived, (byte*)passwd, (int)strlen(passwd), salt, 8,
+    int ret = wc_PBKDF2(derived, (byte*)passwd, (int)XSTRLEN(passwd), salt, 8,
                                                       iterations, kLen, SHA256);
     if (ret != 0)
         return ret;
 
-    if (memcmp(derived, verify, sizeof(verify)) != 0)
+    if (XMEMCMP(derived, verify, sizeof(verify)) != 0)
         return -102;
 
     return 0;
@@ -6192,10 +6275,10 @@ int pbkdf1_test(void)
         0x4A, 0x3D, 0x2A, 0x20
     };
 
-    wc_PBKDF1(derived, (byte*)passwd, (int)strlen(passwd), salt, 8, iterations,
+    wc_PBKDF1(derived, (byte*)passwd, (int)XSTRLEN(passwd), salt, 8, iterations,
            kLen, SHA);
 
-    if (memcmp(derived, verify, sizeof(verify)) != 0)
+    if (XMEMCMP(derived, verify, sizeof(verify)) != 0)
         return -101;
 
     return 0;
@@ -6267,7 +6350,7 @@ int hkdf_test(void)
     if (ret != 0)
         return -2001;
 
-    if (memcmp(okm1, res1, L) != 0)
+    if (XMEMCMP(okm1, res1, L) != 0)
         return -2002;
 
 #ifndef HAVE_FIPS
@@ -6276,7 +6359,7 @@ int hkdf_test(void)
     if (ret != 0)
         return -2003;
 
-    if (memcmp(okm1, res2, L) != 0)
+    if (XMEMCMP(okm1, res2, L) != 0)
         return -2004;
 #endif /* HAVE_FIPS */
 #endif /* NO_SHA */
@@ -6286,7 +6369,7 @@ int hkdf_test(void)
     if (ret != 0)
         return -2005;
 
-    if (memcmp(okm1, res3, L) != 0)
+    if (XMEMCMP(okm1, res3, L) != 0)
         return -2006;
 
 #ifndef HAVE_FIPS
@@ -6295,7 +6378,7 @@ int hkdf_test(void)
     if (ret != 0)
         return -2007;
 
-    if (memcmp(okm1, res4, L) != 0)
+    if (XMEMCMP(okm1, res4, L) != 0)
         return -2007;
 #endif /* HAVE_FIPS */
 #endif /* NO_SHA256 */
@@ -6338,7 +6421,7 @@ static int ecc_test_vector_item(const eccVector* vector)
 
     wc_ecc_init(&userA);
 
-    memset(sig, 0, sizeof(sig));
+    XMEMSET(sig, 0, sizeof(sig));
     x = sizeof(sig);
 
     ret = wc_ecc_import_raw(&userA, vector->Qx, vector->Qy,
@@ -6371,6 +6454,20 @@ static int ecc_test_vector(int keySize)
     vec.keySize = keySize;
 
     switch(keySize) {
+
+#if defined(HAVE_ECC112) || defined(HAVE_ALL_CURVES)
+    case 14:
+        return 0;
+#endif /* HAVE_ECC112 */
+#if defined(HAVE_ECC128) || defined(HAVE_ALL_CURVES)
+    case 16:
+        return 0;
+#endif /* HAVE_ECC128 */
+#if defined(HAVE_ECC160) || defined(HAVE_ALL_CURVES)
+    case 20:
+        return 0;
+#endif /* HAVE_ECC160 */
+
 #if defined(HAVE_ECC192) || defined(HAVE_ALL_CURVES)
     case 24:
         /* first [P-192,SHA-1] vector from FIPS 186-3 NIST vectors */
@@ -6395,7 +6492,7 @@ static int ecc_test_vector(int keySize)
         vec.d  = "e14f37b3d1374ff8b03f41b9b3fdd2f0ebccf275d660d7f3";
         vec.R  = "6994d962bdd0d793ffddf855ec5bf2f91a9698b46258a63e";
         vec.S  = "02ba6465a234903744ab02bc8521405b73cf5fc00e1a9f41";
-        vec.curveName = "ECC-192";
+        vec.curveName = "SECP192R1";
         break;
 #endif /* HAVE_ECC192 */
 
@@ -6423,9 +6520,14 @@ static int ecc_test_vector(int keySize)
         vec.d  = "97c4b796e1639dd1035b708fc00dc7ba1682cec44a1002a1a820619f";
         vec.R  = "147b33758321e722a0360a4719738af848449e2c1d08defebc1671a7";
         vec.S  = "24fc7ed7f1352ca3872aa0916191289e2e04d454935d50fe6af3ad5b";
-        vec.curveName = "ECC-224";
+        vec.curveName = "SECP224R1";
         break;
 #endif /* HAVE_ECC224 */
+
+#if defined(HAVE_ECC239) || defined(HAVE_ALL_CURVES)
+    case 30:
+        return 0;    
+#endif /* HAVE_ECC239 */
 
 #if !defined(NO_ECC256) || defined(HAVE_ALL_CURVES)
     case 32:
@@ -6451,9 +6553,14 @@ static int ecc_test_vector(int keySize)
         vec.d  = "be34baa8d040a3b991f9075b56ba292f755b90e4b6dc10dad36715c33cfdac25";
         vec.R  = "2b826f5d44e2d0b6de531ad96b51e8f0c56fdfead3c236892e4d84eacfc3b75c";
         vec.S  = "a2248b62c03db35a7cd63e8a120a3521a89d3d2f61ff99035a2148ae32e3a248";
-        vec.curveName = "nistp256";
+        vec.curveName = "SECP256R1";
         break;
 #endif /* !NO_ECC256 */
+
+#if defined(HAVE_ECC320) || defined(HAVE_ALL_CURVES)
+    case 40:
+        return 0;
+#endif /* HAVE_ECC320 */
 
 #if defined(HAVE_ECC384) || defined(HAVE_ALL_CURVES)
     case 48:
@@ -6479,9 +6586,14 @@ static int ecc_test_vector(int keySize)
         vec.d  = "a492ce8fa90084c227e1a32f7974d39e9ff67a7e8705ec3419b35fb607582bebd461e0b1520ac76ec2dd4e9b63ebae71";
         vec.R  = "6820b8585204648aed63bdff47f6d9acebdea62944774a7d14f0e14aa0b9a5b99545b2daee6b3c74ebf606667a3f39b7";
         vec.S  = "491af1d0cccd56ddd520b233775d0bc6b40a6255cc55207d8e9356741f23c96c14714221078dbd5c17f4fdd89b32a907";
-        vec.curveName = "nistp384";
+        vec.curveName = "SECP384R1";
         break;
 #endif /* HAVE_ECC384 */
+
+#if defined(HAVE_ECC512) || defined(HAVE_ALL_CURVES)
+    case 64:
+        return 0;
+#endif /* HAVE_ECC512 */
 
 #if defined(HAVE_ECC521) || defined(HAVE_ALL_CURVES)
     case 66:
@@ -6507,7 +6619,7 @@ static int ecc_test_vector(int keySize)
         vec.d  = "1bd56bd106118eda246155bd43b42b8e13f0a6e25dd3bb376026fab4dc92b6157bc6dfec2d15dd3d0cf2a39aa68494042af48ba9601118da82c6f2108a3a203ad74";
         vec.R  = "0bd117b4807710898f9dd7778056485777668f0e78e6ddf5b000356121eb7a220e9493c7f9a57c077947f89ac45d5acb6661bbcd17abb3faea149ba0aa3bb1521be";
         vec.S  = "019cd2c5c3f9870ecdeb9b323abdf3a98cd5e231d85c6ddc5b71ab190739f7f226e6b134ba1d5889ddeb2751dabd97911dff90c34684cdbe7bb669b6c3d22f2480c";
-        vec.curveName = "nistp521";
+        vec.curveName = "SECP521R1";
         break;
 #endif /* HAVE_ECC521 */
     default:
@@ -6544,7 +6656,7 @@ static int ecc_test_key_gen(WC_RNG* rng, int keySize)
 
     ret = wc_ecc_check_key(&userA);
     if (ret != 0)
-        return -1024;
+        return -1023;
 
     derSz = wc_EccKeyToDer(&userA, der, FOURK_BUF);
     if (derSz < 0) {
@@ -6600,13 +6712,12 @@ static int ecc_test_key_gen(WC_RNG* rng, int keySize)
     return 0;
 }
 #endif /* WOLFSSL_KEY_GEN */
-
 static int ecc_test_curve_size(WC_RNG* rng, int keySize, int testVerifyCount,
-    int testCompressedKey)
+    int curve_id)
 {
 #ifdef BENCH_EMBEDDED
-    byte    sharedA[32];
-    byte    sharedB[32];
+    byte    sharedA[128]; /* Needs to be at least keySize */
+    byte    sharedB[128]; /* Needs to be at least keySize */
 #else
     byte    sharedA[1024];
     byte    sharedB[1024];
@@ -6630,88 +6741,88 @@ static int ecc_test_curve_size(WC_RNG* rng, int keySize, int testVerifyCount,
     wc_ecc_init(&userB);
     wc_ecc_init(&pubKey);
 
-    ret = wc_ecc_make_key(rng, keySize, &userA);
+    ret = wc_ecc_make_key_ex(rng, keySize, &userA, curve_id);
     if (ret != 0)
-        return -1014;
+        ERROR_OUT(-1014, done);
 
     ret = wc_ecc_check_key(&userA);
     if (ret != 0)
-        return -1024;
+        ERROR_OUT(-1023, done);
 
-    ret = wc_ecc_make_key(rng, keySize, &userB);
+    ret = wc_ecc_make_key_ex(rng, keySize, &userB, curve_id);
     if (ret != 0)
-        return -1002;
+        ERROR_OUT(-1002, done);
 
 #ifdef HAVE_ECC_DHE
     x = sizeof(sharedA);
     ret = wc_ecc_shared_secret(&userA, &userB, sharedA, &x);
-    if (ret != 0)
-        return -1015;
+    if (ret != 0) {
+        printf("wc_ecc_shared_secret %d\n", ret);
+        ERROR_OUT(-1015, done);
+    }
 
     y = sizeof(sharedB);
     ret = wc_ecc_shared_secret(&userB, &userA, sharedB, &y);
     if (ret != 0)
-        return -1003;
+        ERROR_OUT(-1003, done);
 
     if (y != x)
-        return -1004;
+        ERROR_OUT(-1004, done);
 
-    if (memcmp(sharedA, sharedB, x))
-        return -1005;
+    if (XMEMCMP(sharedA, sharedB, x))
+        ERROR_OUT(-1005, done);
 #endif /* HAVE_ECC_DHE */
 
 #ifdef HAVE_ECC_KEY_EXPORT
     x = sizeof(exportBuf);
-
     ret = wc_ecc_export_x963(&userA, exportBuf, &x);
     if (ret != 0)
-        return -1006;
+        ERROR_OUT(-1006, done);
 
 #ifdef HAVE_ECC_KEY_IMPORT
-    ret = wc_ecc_import_x963(exportBuf, x, &pubKey);
+    ret = wc_ecc_import_x963_ex(exportBuf, x, &pubKey, curve_id);
     if (ret != 0)
-        return -1007;
+        ERROR_OUT(-1007, done);
 
 #ifdef HAVE_ECC_DHE
     y = sizeof(sharedB);
     ret = wc_ecc_shared_secret(&userB, &pubKey, sharedB, &y);
     if (ret != 0)
-        return -1008;
+        ERROR_OUT(-1008, done);
 
-    if (memcmp(sharedA, sharedB, y))
-        return -1009;
+    if (XMEMCMP(sharedA, sharedB, y))
+        ERROR_OUT(-1009, done);
 #endif /* HAVE_ECC_DHE */
 
-    if (testCompressedKey) {
     #ifdef HAVE_COMP_KEY
         /* try compressed export / import too */
         x = sizeof(exportBuf);
-
         ret = wc_ecc_export_x963_ex(&userA, exportBuf, &x, 1);
         if (ret != 0)
-            return -1010;
+            ERROR_OUT(-1010, done);
         wc_ecc_free(&pubKey);
         wc_ecc_init(&pubKey);
 
-        ret = wc_ecc_import_x963(exportBuf, x, &pubKey);
+        ret = wc_ecc_import_x963_ex(exportBuf, x, &pubKey, curve_id);
         if (ret != 0)
-            return -1011;
+            ERROR_OUT(-1011, done);
 
     #ifdef HAVE_ECC_DHE
         y = sizeof(sharedB);
         ret = wc_ecc_shared_secret(&userB, &pubKey, sharedB, &y);
         if (ret != 0)
-            return -1012;
+            ERROR_OUT(-1012, done);
 
-        if (memcmp(sharedA, sharedB, y))
-            return -1013;
+        if (XMEMCMP(sharedA, sharedB, y))
+            ERROR_OUT(-1013, done);
     #endif /* HAVE_ECC_DHE */
     #endif /* HAVE_COMP_KEY */
-    }
+
 #endif /* HAVE_ECC_KEY_IMPORT */
 #endif /* HAVE_ECC_KEY_EXPORT */
 
 #ifdef HAVE_ECC_SIGN
+#ifdef ECC_SHAMIR /* ECC w/out Shamir has issue with all 0 digest */
     /* test DSA sign hash with zeros */
     for (i = 0; i < (int)sizeof(digest); i++) {
         digest[i] = 0;
@@ -6721,18 +6832,19 @@ static int ecc_test_curve_size(WC_RNG* rng, int keySize, int testVerifyCount,
     ret = wc_ecc_sign_hash(digest, sizeof(digest), sig, &x, rng, &userA);
 
     if (ret != 0)
-        return -1014;
+        ERROR_OUT(-1014, done);
 
 #ifdef HAVE_ECC_VERIFY
     for (i=0; i<testVerifyCount; i++) {
         verify = 0;
         ret = wc_ecc_verify_hash(sig, x, digest, sizeof(digest), &verify, &userA);
         if (ret != 0)
-            return -1015;
+            ERROR_OUT(-1015, done);
         if (verify != 1)
-            return -1016;
+            ERROR_OUT(-1016, done);
     }
 #endif /* HAVE_ECC_VERIFY */
+#endif /* ECC_SHAMIR */
 
     /* test DSA sign hash with sequence (0,1,2,3,4,...) */
     for (i = 0; i < (int)sizeof(digest); i++) {
@@ -6743,16 +6855,16 @@ static int ecc_test_curve_size(WC_RNG* rng, int keySize, int testVerifyCount,
     ret = wc_ecc_sign_hash(digest, sizeof(digest), sig, &x, rng, &userA);
 
     if (ret != 0)
-        return -1014;
+        ERROR_OUT(-1014, done);
 
 #ifdef HAVE_ECC_VERIFY
     for (i=0; i<testVerifyCount; i++) {
         verify = 0;
         ret = wc_ecc_verify_hash(sig, x, digest, sizeof(digest), &verify, &userA);
         if (ret != 0)
-            return -1015;
+            ERROR_OUT(-1015, done);
         if (verify != 1)
-            return -1016;
+            ERROR_OUT(-1016, done);
     }
 #endif /* HAVE_ECC_VERIFY */
 #endif /* HAVE_ECC_SIGN */
@@ -6761,36 +6873,33 @@ static int ecc_test_curve_size(WC_RNG* rng, int keySize, int testVerifyCount,
     x = sizeof(exportBuf);
     ret = wc_ecc_export_private_only(&userA, exportBuf, &x);
     if (ret != 0)
-        return -1017;
+        ERROR_OUT(-1017, done);
 #endif /* HAVE_ECC_KEY_EXPORT */
 
+done:
     wc_ecc_free(&pubKey);
     wc_ecc_free(&userB);
     wc_ecc_free(&userA);
 
-    return 0;
+    return ret;
 }
 
 #undef  ECC_TEST_VERIFY_COUNT
 #define ECC_TEST_VERIFY_COUNT 2
 static int ecc_test_curve(WC_RNG* rng, int keySize)
 {
-    int ret, testCompressedKey = 1;
+    int ret;
 
-    /* At this time, ECC 224-bit does not work with compressed key */
-    if (keySize == 28) {
-        testCompressedKey = 0;
-    }
-
-    ret = ecc_test_curve_size(rng, keySize, ECC_TEST_VERIFY_COUNT,
-                                                        testCompressedKey);
+    ret = ecc_test_curve_size(rng, keySize, ECC_TEST_VERIFY_COUNT, ECC_CURVE_DEF);
     if (ret < 0) {
+        printf("ecc_test_curve_size %d failed!: %d\n", keySize, ret);
         return ret;
     }
 
     #ifdef HAVE_ECC_VECTOR_TEST
         ret = ecc_test_vector(keySize);
         if (ret < 0) {
+            printf("ecc_test_vector %d failed!: %d\n", keySize, ret);
             return ret;
         }
     #endif
@@ -6798,6 +6907,7 @@ static int ecc_test_curve(WC_RNG* rng, int keySize)
     #ifdef WOLFSSL_KEY_GEN
         ret = ecc_test_key_gen(rng, keySize);
         if (ret < 0) {
+            printf("ecc_test_key_gen %d failed!: %d\n", keySize, ret);
             return ret;
         }
     #endif
@@ -6814,40 +6924,96 @@ int ecc_test(void)
     if (ret != 0)
         return -1001;
 
+#if defined(HAVE_ECC112) || defined(HAVE_ALL_CURVES)
+    ret = ecc_test_curve(&rng, 14);
+    if (ret < 0) {
+        goto done;
+    }
+#endif /* HAVE_ECC112 */
+#if defined(HAVE_ECC128) || defined(HAVE_ALL_CURVES)
+    ret = ecc_test_curve(&rng, 16);
+    if (ret < 0) {
+        goto done;
+    }
+#endif /* HAVE_ECC128 */
+#if defined(HAVE_ECC160) || defined(HAVE_ALL_CURVES)
+    ret = ecc_test_curve(&rng, 20);
+    if (ret < 0) {
+        goto done;
+    }
+#endif /* HAVE_ECC160 */
 #if defined(HAVE_ECC192) || defined(HAVE_ALL_CURVES)
     ret = ecc_test_curve(&rng, 24);
     if (ret < 0) {
-        return ret;
+        goto done;
     }
 #endif /* HAVE_ECC192 */
 #if defined(HAVE_ECC224) || defined(HAVE_ALL_CURVES)
     ret = ecc_test_curve(&rng, 28);
     if (ret < 0) {
-        return ret;
+        goto done;
     }
 #endif /* HAVE_ECC224 */
+#if defined(HAVE_ECC239) || defined(HAVE_ALL_CURVES)
+    ret = ecc_test_curve(&rng, 30);
+    if (ret < 0) {
+        goto done;
+    }
+#endif /* HAVE_ECC239 */
 #if !defined(NO_ECC256) || defined(HAVE_ALL_CURVES)
     ret = ecc_test_curve(&rng, 32);
     if (ret < 0) {
-        return ret;
+        goto done;
     }
 #endif /* !NO_ECC256 */
+#if defined(HAVE_ECC320) || defined(HAVE_ALL_CURVES)
+    ret = ecc_test_curve(&rng, 40);
+    if (ret < 0) {
+        goto done;
+    }
+#endif /* HAVE_ECC320 */
 #if defined(HAVE_ECC384) || defined(HAVE_ALL_CURVES)
     ret = ecc_test_curve(&rng, 48);
     if (ret < 0) {
-        return ret;
+        goto done;
     }
 #endif /* HAVE_ECC384 */
+#if defined(HAVE_ECC512) || defined(HAVE_ALL_CURVES)
+    ret = ecc_test_curve(&rng, 64);
+    if (ret < 0) {
+        goto done;
+    }
+#endif /* HAVE_ECC512 */
 #if defined(HAVE_ECC521) || defined(HAVE_ALL_CURVES)
     ret = ecc_test_curve(&rng, 66);
     if (ret < 0) {
-        return ret;
+        goto done;
     }
 #endif /* HAVE_ECC521 */
 
+#if defined(WOLFSSL_CUSTOM_CURVES)
+    #if defined(HAVE_ECC_BRAINPOOL) || defined(HAVE_ECC_KOBLITZ)
+    {
+        int curve_id;
+        #ifdef HAVE_ECC_BRAINPOOL
+            curve_id = ECC_BRAINPOOLP256R1;
+        #else
+            curve_id = ECC_SECP256K1;
+        #endif
+        /* Test and demonstrate use of non-SECP curve */
+        ret = ecc_test_curve_size(&rng, 0, ECC_TEST_VERIFY_COUNT, curve_id);
+        if (ret < 0) {
+            printf("ecc_test_curve_size: type %d: failed!: %d\n", curve_id, ret);
+            goto done;
+        }
+    }
+    #endif
+#endif
+
+done:
     wc_FreeRng(&rng);
 
-    return 0;
+    return ret;
 }
 
 #ifdef HAVE_ECC_ENCRYPT
@@ -6890,7 +7056,7 @@ int ecc_encrypt_test(void)
     if (ret != 0)
         return -3004;
 
-    if (memcmp(plain, msg, sizeof(msg)) != 0)
+    if (XMEMCMP(plain, msg, sizeof(msg)) != 0)
         return -3005;
 
 
@@ -6909,12 +7075,12 @@ int ecc_encrypt_test(void)
         tmpSalt = wc_ecc_ctx_get_own_salt(cliCtx);
         if (tmpSalt == NULL)
             return -3007;
-        memcpy(cliSalt, tmpSalt, EXCHANGE_SALT_SZ);
+        XMEMCPY(cliSalt, tmpSalt, EXCHANGE_SALT_SZ);
 
         tmpSalt = wc_ecc_ctx_get_own_salt(srvCtx);
         if (tmpSalt == NULL)
             return -3007;
-        memcpy(srvSalt, tmpSalt, EXCHANGE_SALT_SZ);
+        XMEMCPY(srvSalt, tmpSalt, EXCHANGE_SALT_SZ);
 
         /* in actual use, we'd get the peer's salt over the transport */
         ret  = wc_ecc_ctx_set_peer_salt(cliCtx, srvSalt);
@@ -6938,7 +7104,7 @@ int ecc_encrypt_test(void)
         if (ret != 0)
             return -3010;
 
-        if (memcmp(plain, msg, sizeof(msg)) != 0)
+        if (XMEMCMP(plain, msg, sizeof(msg)) != 0)
             return -3011;
 
         {
@@ -6964,7 +7130,7 @@ int ecc_encrypt_test(void)
             if (ret != 0)
                 return -3013;
 
-            if (memcmp(plain2, msg2, sizeof(msg2)) != 0)
+            if (XMEMCMP(plain2, msg2, sizeof(msg2)) != 0)
                 return -3014;
         }
 
@@ -7592,6 +7758,193 @@ int ed25519_test(void)
 #endif /* HAVE_ED25519 */
 
 
+#if defined(WOLFSSL_CMAC) && !defined(NO_AES)
+ 
+typedef struct CMAC_Test_Case {
+    int type;
+    int partial;
+    const byte* m;
+    word32 mSz;
+    const byte* k;
+    word32 kSz;
+    const byte* t;
+    word32 tSz;
+} CMAC_Test_Case;
+
+int cmac_test(void)
+{
+    const byte k128[] =
+    {
+        0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6,
+        0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c
+    };
+    const byte k192[] =
+    {
+        0x8e, 0x73, 0xb0, 0xf7, 0xda, 0x0e, 0x64, 0x52,
+        0xc8, 0x10, 0xf3, 0x2b, 0x80, 0x90, 0x79, 0xe5,
+        0x62, 0xf8, 0xea, 0xd2, 0x52, 0x2c, 0x6b, 0x7b
+    };
+    const byte k256[] =
+    {
+        0x60, 0x3d, 0xeb, 0x10, 0x15, 0xca, 0x71, 0xbe,
+        0x2b, 0x73, 0xae, 0xf0, 0x85, 0x7d, 0x77, 0x81,
+        0x1f, 0x35, 0x2c, 0x07, 0x3b, 0x61, 0x08, 0xd7,
+        0x2d, 0x98, 0x10, 0xa3, 0x09, 0x14, 0xdf, 0xf4
+    };
+    #define KLEN_128 (sizeof(k128))
+    #define KLEN_192 (sizeof(k192))
+    #define KLEN_256 (sizeof(k256))
+
+    const byte m[] =
+    {
+        0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96,
+        0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a,
+        0xae, 0x2d, 0x8a, 0x57, 0x1e, 0x03, 0xac, 0x9c,
+        0x9e, 0xb7, 0x6f, 0xac, 0x45, 0xaf, 0x8e, 0x51,
+        0x30, 0xc8, 0x1c, 0x46, 0xa3, 0x5c, 0xe4, 0x11,
+        0xe5, 0xfb, 0xc1, 0x19, 0x1a, 0x0a, 0x52, 0xef,
+        0xf6, 0x9f, 0x24, 0x45, 0xdf, 0x4f, 0x9b, 0x17,
+        0xad, 0x2b, 0x41, 0x7b, 0xe6, 0x6c, 0x37, 0x10
+    };
+    #define MLEN_0 (0)
+    #define MLEN_128 (128/8)
+    #define MLEN_320 (320/8)
+    #define MLEN_319 (MLEN_320 - 1)
+    #define MLEN_512 (512/8)
+
+    const byte t128_0[] =
+    {
+        0xbb, 0x1d, 0x69, 0x29, 0xe9, 0x59, 0x37, 0x28,
+        0x7f, 0xa3, 0x7d, 0x12, 0x9b, 0x75, 0x67, 0x46
+    };
+    const byte t128_128[] =
+    {
+        0x07, 0x0a, 0x16, 0xb4, 0x6b, 0x4d, 0x41, 0x44,
+        0xf7, 0x9b, 0xdd, 0x9d, 0xd0, 0x4a, 0x28, 0x7c
+    };
+    const byte t128_319[] =
+    {
+        0x2c, 0x17, 0x84, 0x4c, 0x93, 0x1c, 0x07, 0x95,
+        0x15, 0x92, 0x73, 0x0a, 0x34, 0xd0, 0xd9, 0xd2
+    };
+    const byte t128_320[] =
+    {
+        0xdf, 0xa6, 0x67, 0x47, 0xde, 0x9a, 0xe6, 0x30,
+        0x30, 0xca, 0x32, 0x61, 0x14, 0x97, 0xc8, 0x27
+    };
+    const byte t128_512[] =
+    {
+        0x51, 0xf0, 0xbe, 0xbf, 0x7e, 0x3b, 0x9d, 0x92,
+        0xfc, 0x49, 0x74, 0x17, 0x79, 0x36, 0x3c, 0xfe
+    };
+
+    const byte t192_0[] =
+    {
+        0xd1, 0x7d, 0xdf, 0x46, 0xad, 0xaa, 0xcd, 0xe5,
+        0x31, 0xca, 0xc4, 0x83, 0xde, 0x7a, 0x93, 0x67
+    };
+    const byte t192_128[] =
+    {
+        0x9e, 0x99, 0xa7, 0xbf, 0x31, 0xe7, 0x10, 0x90,
+        0x06, 0x62, 0xf6, 0x5e, 0x61, 0x7c, 0x51, 0x84
+    };
+    const byte t192_320[] =
+    {
+        0x8a, 0x1d, 0xe5, 0xbe, 0x2e, 0xb3, 0x1a, 0xad,
+        0x08, 0x9a, 0x82, 0xe6, 0xee, 0x90, 0x8b, 0x0e
+    };
+    const byte t192_512[] =
+    {
+        0xa1, 0xd5, 0xdf, 0x0e, 0xed, 0x79, 0x0f, 0x79,
+        0x4d, 0x77, 0x58, 0x96, 0x59, 0xf3, 0x9a, 0x11
+    };
+
+    const byte t256_0[] =
+    {
+        0x02, 0x89, 0x62, 0xf6, 0x1b, 0x7b, 0xf8, 0x9e,
+        0xfc, 0x6b, 0x55, 0x1f, 0x46, 0x67, 0xd9, 0x83
+    };
+    const byte t256_128[] =
+    {
+        0x28, 0xa7, 0x02, 0x3f, 0x45, 0x2e, 0x8f, 0x82,
+        0xbd, 0x4b, 0xf2, 0x8d, 0x8c, 0x37, 0xc3, 0x5c
+    };
+    const byte t256_320[] =
+    {
+        0xaa, 0xf3, 0xd8, 0xf1, 0xde, 0x56, 0x40, 0xc2,
+        0x32, 0xf5, 0xb1, 0x69, 0xb9, 0xc9, 0x11, 0xe6
+    };
+    const byte t256_512[] =
+    {
+        0xe1, 0x99, 0x21, 0x90, 0x54, 0x9f, 0x6e, 0xd5,
+        0x69, 0x6a, 0x2c, 0x05, 0x6c, 0x31, 0x54, 0x10
+    };
+
+    const CMAC_Test_Case testCases[] =
+    {
+        {WC_CMAC_AES, 0, m, MLEN_0, k128, KLEN_128, t128_0, AES_BLOCK_SIZE},
+        {WC_CMAC_AES, 0, m, MLEN_128, k128, KLEN_128, t128_128, AES_BLOCK_SIZE},
+        {WC_CMAC_AES, 0, m, MLEN_320, k128, KLEN_128, t128_320, AES_BLOCK_SIZE},
+        {WC_CMAC_AES, 0, m, MLEN_512, k128, KLEN_128, t128_512, AES_BLOCK_SIZE},
+        {WC_CMAC_AES, 5, m, MLEN_512, k128, KLEN_128, t128_512, AES_BLOCK_SIZE},
+        {WC_CMAC_AES, 0, m, MLEN_0, k192, KLEN_192, t192_0, AES_BLOCK_SIZE},
+        {WC_CMAC_AES, 0, m, MLEN_128, k192, KLEN_192, t192_128, AES_BLOCK_SIZE},
+        {WC_CMAC_AES, 0, m, MLEN_320, k192, KLEN_192, t192_320, AES_BLOCK_SIZE},
+        {WC_CMAC_AES, 0, m, MLEN_512, k192, KLEN_192, t192_512, AES_BLOCK_SIZE},
+        {WC_CMAC_AES, 0, m, MLEN_0, k256, KLEN_256, t256_0, AES_BLOCK_SIZE},
+        {WC_CMAC_AES, 0, m, MLEN_128, k256, KLEN_256, t256_128, AES_BLOCK_SIZE},
+        {WC_CMAC_AES, 0, m, MLEN_320, k256, KLEN_256, t256_320, AES_BLOCK_SIZE},
+        {WC_CMAC_AES, 0, m, MLEN_512, k256, KLEN_256, t256_512, AES_BLOCK_SIZE},
+        {WC_CMAC_AES, 0, m, MLEN_319, k128, KLEN_128, t128_319, AES_BLOCK_SIZE}
+    };
+
+    Cmac cmac;
+    byte tag[AES_BLOCK_SIZE];
+    const CMAC_Test_Case* tc;
+    word32 i, tagSz;
+
+    for (i = 0, tc = testCases;
+         i < sizeof(testCases)/sizeof(CMAC_Test_Case);
+         i++, tc++) {
+
+        XMEMSET(tag, 0, sizeof(tag));
+        tagSz = AES_BLOCK_SIZE;
+        if (wc_InitCmac(&cmac, tc->k, tc->kSz, tc->type, NULL) != 0)
+            return -4033;
+        if (tc->partial) {
+            if (wc_CmacUpdate(&cmac, tc->m,
+                                 tc->mSz/2 - tc->partial) != 0)
+                return -4034;
+            if (wc_CmacUpdate(&cmac, tc->m + tc->mSz/2 - tc->partial,
+                                 tc->mSz/2 + tc->partial) != 0)
+                return -4035;
+        }
+        else {
+            if (wc_CmacUpdate(&cmac, tc->m, tc->mSz) != 0)
+                return -4034;
+        }
+        if (wc_CmacFinal(&cmac, tag, &tagSz) != 0)
+            return -4036;
+        if (XMEMCMP(tag, tc->t, AES_BLOCK_SIZE) != 0)
+            return -4037;
+
+        XMEMSET(tag, 0, sizeof(tag));
+        tagSz = sizeof(tag);
+        if (wc_AesCmacGenerate(tag, &tagSz, tc->m, tc->mSz,
+                               tc->k, tc->kSz) != 0)
+            return -4038;
+        if (XMEMCMP(tag, tc->t, AES_BLOCK_SIZE) != 0)
+            return -4039;
+        if (wc_AesCmacVerify(tc->t, tc->tSz, tc->m, tc->mSz,
+                             tc->k, tc->kSz) != 0)
+            return -4040;
+    }
+
+    return 0;
+}
+
+#endif /* NO_AES && WOLFSSL_CMAC */
+
 #ifdef HAVE_LIBZ
 
 const byte sample_text[] =
@@ -7680,8 +8033,12 @@ int compress_test(void)
     byte *c = NULL;
     byte *d = NULL;
 
-    c = calloc(cSz, sizeof(byte));
-    d = calloc(dSz, sizeof(byte));
+    c = TEST_XMALLOC(cSz * sizeof(byte), HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    d = TEST_XMALLOC(dSz * sizeof(byte), HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+
+    /* follow calloc and initialize to 0 */
+    XMEMSET(c, 0, cSz);
+    XMEMSET(d, 0, dSz);
 
     if (c == NULL || d == NULL)
         ret = -300;
@@ -7697,11 +8054,11 @@ int compress_test(void)
     if (ret == 0 && wc_DeCompress(d, dSz, c, cSz) != (int)dSz)
         ret = -302;
 
-    if (ret == 0 && memcmp(d, sample_text, dSz))
+    if (ret == 0 && XMEMCMP(d, sample_text, dSz))
         ret = -303;
 
-    if (c) free(c);
-    if (d) free(d);
+    if (c) TEST_XFREE(c, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    if (d) TEST_XFREE(d, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
 
     return ret;
 }
@@ -7735,20 +8092,20 @@ int pkcs7enveloped_test(void)
     };
 
     /* read client cert and key in DER format */
-    cert = (byte*)malloc(FOURK_BUF);
+    cert = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     if (cert == NULL)
         return -201;
 
-    privKey = (byte*)malloc(FOURK_BUF);
+    privKey =(byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     if (privKey == NULL) {
-        free(cert);
+        TEST_XFREE(cert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -202;
     }
 
     certFile = fopen(clientCert, "rb");
     if (!certFile) {
-        free(cert);
-        free(privKey);
+        TEST_XFREE(cert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(privKey, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         err_sys("can't open ./certs/client-cert.der, "
                 "Please run from wolfSSL home dir", -42);
         return -42;
@@ -7759,8 +8116,8 @@ int pkcs7enveloped_test(void)
 
     keyFile = fopen(clientKey, "rb");
     if (!keyFile) {
-        free(cert);
-        free(privKey);
+        TEST_XFREE(cert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(privKey, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         err_sys("can't open ./certs/client-key.der, "
                 "Please run from wolfSSL home dir", -43);
         return -43;
@@ -7781,8 +8138,8 @@ int pkcs7enveloped_test(void)
     envelopedSz = wc_PKCS7_EncodeEnvelopedData(&pkcs7, enveloped,
                                             sizeof(enveloped));
     if (envelopedSz <= 0) {
-        free(cert);
-        free(privKey);
+        TEST_XFREE(cert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(privKey, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -203;
     }
 
@@ -7790,31 +8147,31 @@ int pkcs7enveloped_test(void)
     decodedSz = wc_PKCS7_DecodeEnvelopedData(&pkcs7, enveloped, envelopedSz,
                                           decoded, sizeof(decoded));
     if (decodedSz <= 0) {
-        free(cert);
-        free(privKey);
+        TEST_XFREE(cert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(privKey, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -204;
     }
 
     /* test decode result */
-    if (memcmp(decoded, data, sizeof(data)) != 0) {
-        free(cert);
-        free(privKey);
+    if (XMEMCMP(decoded, data, sizeof(data)) != 0) {
+        TEST_XFREE(cert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(privKey, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -205;
     }
 
     /* output pkcs7 envelopedData for external testing */
     pkcs7File = fopen(pkcs7OutFile, "wb");
     if (!pkcs7File) {
-        free(cert);
-        free(privKey);
+        TEST_XFREE(cert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(privKey, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -206;
     }
 
     ret = (int)fwrite(enveloped, envelopedSz, 1, pkcs7File);
     fclose(pkcs7File);
 
-    free(cert);
-    free(privKey);
+    TEST_XFREE(cert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    TEST_XFREE(privKey, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     wc_PKCS7_Free(&pkcs7);
 
     if (ret > 0)
@@ -7859,30 +8216,30 @@ int pkcs7signed_test(void)
                      senderNonce, sizeof(senderNonce) }
     };
 
-    dataSz = (word32) strlen(data);
+    dataSz = (word32) XSTRLEN(data);
     outSz = FOURK_BUF;
 
-    certDer = (byte*)malloc(FOURK_BUF);
+    certDer =(byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     if (certDer == NULL)
         return -207;
-    keyDer = (byte*)malloc(FOURK_BUF);
+    keyDer = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     if (keyDer == NULL) {
-        free(certDer);
+        TEST_XFREE(certDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -208;
     }
-    out = (byte*)malloc(FOURK_BUF);
+    out = (byte*)TEST_XMALLOC(FOURK_BUF, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     if (out == NULL) {
-        free(certDer);
-        free(keyDer);
+        TEST_XFREE(certDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(keyDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -209;
     }
 
     /* read in DER cert of recipient, into cert of size certSz */
     file = fopen(clientCert, "rb");
     if (!file) {
-        free(certDer);
-        free(keyDer);
-        free(out);
+        TEST_XFREE(certDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(keyDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(out, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         err_sys("can't open ./certs/client-cert.der, "
                 "Please run from wolfSSL home dir", -44);
         return -44;
@@ -7892,9 +8249,9 @@ int pkcs7signed_test(void)
 
     file = fopen(clientKey, "rb");
     if (!file) {
-        free(certDer);
-        free(keyDer);
-        free(out);
+        TEST_XFREE(certDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(keyDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(out, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         err_sys("can't open ./certs/client-key.der, "
                 "Please run from wolfSSL home dir", -45);
         return -45;
@@ -7904,9 +8261,9 @@ int pkcs7signed_test(void)
 
     ret = wc_InitRng(&rng);
     if (ret != 0) {
-        free(certDer);
-        free(keyDer);
-        free(out);
+        TEST_XFREE(certDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(keyDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(out, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -210;
     }
 
@@ -7915,9 +8272,9 @@ int pkcs7signed_test(void)
 
     ret = wc_RNG_GenerateBlock(&rng, &senderNonce[2], PKCS7_NONCE_SZ);
     if (ret != 0) {
-        free(certDer);
-        free(keyDer);
-        free(out);
+        TEST_XFREE(certDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(keyDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(out, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         return -211;
     }
 
@@ -7941,9 +8298,9 @@ int pkcs7signed_test(void)
 
         ret = wc_InitSha(&sha);
         if (ret != 0) {
-            free(certDer);
-            free(keyDer);
-            free(out);
+            TEST_XFREE(certDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(keyDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+            TEST_XFREE(out, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return -4003;
         }
         wc_ShaUpdate(&sha, msg.publicKey, msg.publicKeySz);
@@ -7955,9 +8312,9 @@ int pkcs7signed_test(void)
     }
     ret = wc_PKCS7_EncodeSignedData(&msg, out, outSz);
     if (ret < 0) {
-        free(certDer);
-        free(keyDer);
-        free(out);
+        TEST_XFREE(certDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(keyDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(out, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         wc_PKCS7_Free(&msg);
         return -212;
     }
@@ -7967,18 +8324,18 @@ int pkcs7signed_test(void)
     /* write PKCS#7 to output file for more testing */
     file = fopen("./pkcs7signedData.der", "wb");
     if (!file) {
-        free(certDer);
-        free(keyDer);
-        free(out);
+        TEST_XFREE(certDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(keyDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(out, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         wc_PKCS7_Free(&msg);
         return -213;
     }
     ret = (int)fwrite(out, 1, outSz, file);
     fclose(file);
     if (ret != (int)outSz) {
-        free(certDer);
-        free(keyDer);
-        free(out);
+        TEST_XFREE(certDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(keyDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(out, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         wc_PKCS7_Free(&msg);
         return -218;
     }
@@ -7988,35 +8345,35 @@ int pkcs7signed_test(void)
 
     ret = wc_PKCS7_VerifySignedData(&msg, out, outSz);
     if (ret < 0) {
-        free(certDer);
-        free(keyDer);
-        free(out);
+        TEST_XFREE(certDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(keyDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(out, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         wc_PKCS7_Free(&msg);
         return -214;
     }
 
     if (msg.singleCert == NULL || msg.singleCertSz == 0) {
-        free(certDer);
-        free(keyDer);
-        free(out);
+        TEST_XFREE(certDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(keyDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(out, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         wc_PKCS7_Free(&msg);
         return -215;
     }
 
     file = fopen("./pkcs7cert.der", "wb");
     if (!file) {
-        free(certDer);
-        free(keyDer);
-        free(out);
+        TEST_XFREE(certDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(keyDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        TEST_XFREE(out, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         wc_PKCS7_Free(&msg);
         return -216;
     }
     ret = (int)fwrite(msg.singleCert, 1, msg.singleCertSz, file);
     fclose(file);
 
-    free(certDer);
-    free(keyDer);
-    free(out);
+    TEST_XFREE(certDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    TEST_XFREE(keyDer, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    TEST_XFREE(out, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     wc_PKCS7_Free(&msg);
 
     wc_FreeRng(&rng);
@@ -8028,6 +8385,9 @@ int pkcs7signed_test(void)
 }
 
 #endif /* HAVE_PKCS7 */
+
+#undef ERROR_OUT
+
 #else
     #ifndef NO_MAIN_DRIVER
         int main() { return 0; }

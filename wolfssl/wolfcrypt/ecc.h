@@ -43,14 +43,63 @@ enum {
     ECC_MINSIZE     = 20,   /* MIN Private Key size */
     ECC_MAXSIZE     = 66,   /* MAX Private Key size */
     ECC_MAXSIZE_GEN = 74,   /* MAX Buffer size required when generating ECC keys*/
-    ECC_MAX_PAD_SZ  = 4     /* ECC maximum padding size */
+    ECC_MAX_PAD_SZ  = 4,    /* ECC maximum padding size */
+    ECC_MAX_OID_LEN = 16,
 };
 
+/* Curve Types */
+typedef enum ecc_curve_id {
+    ECC_CURVE_DEF, /* NIST or SECP */
 
-/* ECC set type defined a NIST GF(p) curve */
+    /* NIST Prime Curves */
+    ECC_SECP192R1,
+    ECC_PRIME192V2,
+    ECC_PRIME192V3,
+    ECC_PRIME239V1,
+    ECC_PRIME239V2,
+    ECC_PRIME239V3,
+    ECC_SECP256R1,
+
+    /* SECP Curves */
+    ECC_SECP112R1,
+    ECC_SECP112R2,
+    ECC_SECP128R1,
+    ECC_SECP128R2,
+    ECC_SECP160R1,
+    ECC_SECP160R2,
+    ECC_SECP224R1,
+    ECC_SECP384R1,
+    ECC_SECP521R1,
+
+    /* Koblitz */
+    ECC_SECP160K1,
+    ECC_SECP192K1,
+    ECC_SECP224K1,
+    ECC_SECP256K1,
+
+    /* Brainpool Curves */
+    ECC_BRAINPOOLP160R1,
+    ECC_BRAINPOOLP192R1,
+    ECC_BRAINPOOLP224R1,
+    ECC_BRAINPOOLP256R1,
+    ECC_BRAINPOOLP320R1,
+    ECC_BRAINPOOLP384R1,
+    ECC_BRAINPOOLP512R1,
+} ecc_curve_id;
+
+#ifdef HAVE_OID_ENCODING
+typedef word16 ecc_oid_t;
+#else
+typedef byte   ecc_oid_t;
+    /* OID encoded with ASN scheme:
+        first element = (oid[0] * 40) + oid[1]
+        if any element > 127 then MSB 0x80 indicates additional byte */
+#endif
+
+/* ECC set type defined a GF(p) curve */
 typedef struct {
     int size;             /* The size of the curve in octets */
-    int nid;              /* id of this curve */
+    int id;               /* id of this curve */
     const char* name;     /* name of this curve */
     const char* prime;    /* prime that defines the field, curve is in (hex) */
     const char* Af;       /* fields A param (hex) */
@@ -58,7 +107,42 @@ typedef struct {
     const char* order;    /* order of the curve (hex) */
     const char* Gx;       /* x coordinate of the base point on curve (hex) */
     const char* Gy;       /* y coordinate of the base point on curve (hex) */
+    const ecc_oid_t* oid;
+    word32      oidSz;
+    word32      oidSum;    /* sum of encoded OID bytes */
+    int         cofactor;
 } ecc_set_type;
+
+
+/* Use this as the key->idx if a custom ecc_set is used for key->dp */
+#define ECC_CUSTOM_IDX    (-1)
+
+
+/* Determine max ECC bits based on enabled curves */
+#if defined(HAVE_ECC521) || defined(HAVE_ALL_CURVES)
+    #define MAX_ECC_BITS    521
+#elif defined(HAVE_ECC512)
+    #define MAX_ECC_BITS    512
+#elif defined(HAVE_ECC384)
+    #define MAX_ECC_BITS    384
+#elif defined(HAVE_ECC320)
+    #define MAX_ECC_BITS    320
+#elif defined(HAVE_ECC239)
+    #define MAX_ECC_BITS    239
+#elif defined(HAVE_ECC224)
+    #define MAX_ECC_BITS    224
+#elif !defined(NO_ECC256)
+    #define MAX_ECC_BITS    256
+#elif defined(HAVE_ECC192)
+    #define MAX_ECC_BITS    192
+#elif defined(HAVE_ECC160)
+    #define MAX_ECC_BITS    160
+#elif defined(HAVE_ECC128)
+    #define MAX_ECC_BITS    128
+#elif defined(HAVE_ECC112)
+    #define MAX_ECC_BITS    112
+#endif
+
 
 
 #ifdef ALT_ECC_SIZE
@@ -90,14 +174,26 @@ typedef struct {
     #error USE_FAST_MATH must be defined to use ALT_ECC_SIZE
 #endif
 
+/* determine max bits required for ECC math */
 #ifndef FP_MAX_BITS_ECC
-    #define FP_MAX_BITS_ECC           528
+    /* check alignment */
+    #if ((MAX_ECC_BITS * 2) % DIGIT_BIT) == 0
+        /* max bits is double */
+        #define FP_MAX_BITS_ECC     (MAX_ECC_BITS * 2)
+    #else
+        /* max bits is doubled, plus one digit of fudge */
+        #define FP_MAX_BITS_ECC     ((MAX_ECC_BITS * 2) + DIGIT_BIT)
+    #endif
+#else
+    /* verify alignment */
+    #if FP_MAX_BITS_ECC % CHAR_BIT
+       #error FP_MAX_BITS_ECC must be a multiple of CHAR_BIT
+    #endif
 #endif
-#define FP_MAX_SIZE_ECC           (FP_MAX_BITS_ECC+(8*DIGIT_BIT))
-#if FP_MAX_BITS_ECC % CHAR_BIT
-   #error FP_MAX_BITS_ECC must be a multiple of CHAR_BIT
-#endif
-#define FP_SIZE_ECC    (FP_MAX_SIZE_ECC/DIGIT_BIT)
+
+/* determine buffer size */
+#define FP_SIZE_ECC    (FP_MAX_BITS_ECC/DIGIT_BIT)
+
 
 /* This needs to match the size of the fp_int struct, except the
  * fp_digit array will be shorter. */
@@ -133,6 +229,7 @@ typedef struct {
                                    curves (idx >= 0) or user supplied */
     ecc_point pubkey;   /* public key */
     mp_int    k;        /* private key */
+    void*     heap;     /* heap hint */
 } ecc_key;
 
 
@@ -142,6 +239,9 @@ extern const ecc_set_type ecc_sets[];
 
 WOLFSSL_API
 int wc_ecc_make_key(WC_RNG* rng, int keysize, ecc_key* key);
+WOLFSSL_API
+int wc_ecc_make_key_ex(WC_RNG* rng, int keysize, ecc_key* key,
+    int curve_id);
 WOLFSSL_API
 int wc_ecc_check_key(ecc_key* key);
 
@@ -175,6 +275,8 @@ int wc_ecc_verify_hash_ex(mp_int *r, mp_int *s, const byte* hash,
 WOLFSSL_API
 int wc_ecc_init(ecc_key* key);
 WOLFSSL_API
+int wc_ecc_init_h(ecc_key* key, void* heap);
+WOLFSSL_API
 void wc_ecc_free(ecc_key* key);
 WOLFSSL_API
 void wc_ecc_fp_free(void);
@@ -182,7 +284,11 @@ void wc_ecc_fp_free(void);
 WOLFSSL_API
 ecc_point* wc_ecc_new_point(void);
 WOLFSSL_API
+ecc_point* wc_ecc_new_point_h(void* h);
+WOLFSSL_API
 void wc_ecc_del_point(ecc_point* p);
+WOLFSSL_API
+void wc_ecc_del_point_h(ecc_point* p, void* h);
 WOLFSSL_API
 int wc_ecc_copy_point(ecc_point* p, ecc_point *r);
 WOLFSSL_API
@@ -193,8 +299,11 @@ WOLFSSL_API
 int wc_ecc_is_valid_idx(int n);
 WOLFSSL_API
 int wc_ecc_mulmod(mp_int* k, ecc_point *G, ecc_point *R,
-                  mp_int* modulus, int map);
+                  mp_int* a, mp_int* modulus, int map);
 
+WOLFSSL_LOCAL
+int wc_ecc_mulmod_ex(mp_int* k, ecc_point *G, ecc_point *R,
+                  mp_int* a, mp_int* modulus, int map, void* heap);
 #ifdef HAVE_ECC_KEY_EXPORT
 /* ASN key helpers */
 WOLFSSL_API
@@ -208,6 +317,9 @@ int wc_ecc_export_x963_ex(ecc_key*, byte* out, word32* outLen, int compressed);
 WOLFSSL_API
 int wc_ecc_import_x963(const byte* in, word32 inLen, ecc_key* key);
 WOLFSSL_API
+int wc_ecc_import_x963_ex(const byte* in, word32 inLen, ecc_key* key,
+                          int curve_id);
+WOLFSSL_API
 int wc_ecc_import_private_key(const byte* priv, word32 privSz, const byte* pub,
                            word32 pubSz, ecc_key* key);
 WOLFSSL_API
@@ -215,6 +327,9 @@ int wc_ecc_rs_to_sig(const char* r, const char* s, byte* out, word32* outlen);
 WOLFSSL_API
 int wc_ecc_import_raw(ecc_key* key, const char* qx, const char* qy,
                    const char* d, const char* curveName);
+WOLFSSL_API
+int wc_ecc_import_raw_ex(ecc_key* key, const char* qx, const char* qy,
+                   const char* d, int curve_id);
 #endif /* HAVE_ECC_KEY_IMPORT */
 
 #ifdef HAVE_ECC_KEY_EXPORT
@@ -238,6 +353,13 @@ int wc_ecc_size(ecc_key* key);
 WOLFSSL_API
 int wc_ecc_sig_size(ecc_key* key);
 
+WOLFSSL_API
+int wc_ecc_get_oid(word32 oidSum, const byte** oid, word32* oidSz);
+
+#ifdef WOLFSSL_CUSTOM_CURVES
+    WOLFSSL_API
+    int wc_ecc_set_custom_curve(ecc_key* key, const ecc_set_type* dp);
+#endif
 
 #ifdef HAVE_ECC_ENCRYPT
 /* ecc encrypt */
@@ -276,6 +398,8 @@ typedef struct ecEncCtx ecEncCtx;
 
 WOLFSSL_API
 ecEncCtx* wc_ecc_ctx_new(int flags, WC_RNG* rng);
+WOLFSSL_API
+ecEncCtx* wc_ecc_ctx_new_ex(int flags, WC_RNG* rng, void* heap);
 WOLFSSL_API
 void wc_ecc_ctx_free(ecEncCtx*);
 WOLFSSL_API

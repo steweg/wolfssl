@@ -52,6 +52,10 @@
     #include <wolfssl/wolfcrypt/arc4.h>
 #endif /* HAVE_HASHDRBG || NO_RC4 */
 
+#ifdef HAVE_WNR
+    #include <wnr.h>
+#endif
+
 #if defined(USE_WINDOWS_API)
     #if defined(_WIN64)
         typedef unsigned __int64 ProviderHandle;
@@ -84,6 +88,7 @@ struct DRBG; /* Private DRBG state */
 typedef struct WC_RNG {
     struct DRBG* drbg;
     OS_Seed seed;
+    void* heap;
     byte status;
 } WC_RNG;
 
@@ -129,8 +134,15 @@ int wc_GenerateSeed(OS_Seed* os, byte* seed, word32 sz);
 
 #endif /* HAVE_HASH_DRBG || NO_RC4 */
 
+#ifdef HAVE_WNR
+    /* Whitewood netRandom client library */
+    WOLFSSL_API int  wc_InitNetRandom(const char*, wnr_hmac_key, int);
+    WOLFSSL_API int  wc_FreeNetRandom(void);
+#endif /* HAVE_WNR */
+
 
 WOLFSSL_API int  wc_InitRng(WC_RNG*);
+WOLFSSL_API int  wc_InitRng_ex(WC_RNG* rng, void* heap);
 WOLFSSL_API int  wc_RNG_GenerateBlock(WC_RNG*, byte*, word32 sz);
 WOLFSSL_API int  wc_RNG_GenerateByte(WC_RNG*, byte*);
 WOLFSSL_API int  wc_FreeRng(WC_RNG*);

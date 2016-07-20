@@ -241,12 +241,33 @@ enum Key_Sum {
 
 
 enum Ecc_Sum {
-    ECC_256R1 = 526,
-    ECC_384R1 = 210,
-    ECC_521R1 = 211,
-    ECC_160R1 = 184,
-    ECC_192R1 = 520,
-    ECC_224R1 = 209
+    ECC_SECP112R1_OID = 182,
+    ECC_SECP112R2_OID = 183,
+    ECC_SECP128R1_OID = 204,
+    ECC_SECP128R2_OID = 205,
+    ECC_SECP160R1_OID = 184,
+    ECC_SECP160R2_OID = 206,
+    ECC_SECP160K1_OID = 185,
+    ECC_BRAINPOOLP160R1_OID = 98,
+    ECC_SECP192R1_OID = 520,
+    ECC_PRIME192V2_OID = 521,
+    ECC_PRIME192V3_OID = 522,
+    ECC_SECP192K1_OID = 207,
+    ECC_BRAINPOOLP192R1_OID = 100,
+    ECC_SECP224R1_OID = 209,
+    ECC_SECP224K1_OID = 208,
+    ECC_BRAINPOOLP224R1_OID = 102,
+    ECC_PRIME239V1_OID = 523,
+    ECC_PRIME239V2_OID = 524,
+    ECC_PRIME239V3_OID = 525,
+    ECC_SECP256R1_OID = 526,
+    ECC_SECP256K1_OID = 186,
+    ECC_BRAINPOOLP256R1_OID = 104,
+    ECC_BRAINPOOLP320R1_OID = 106,
+    ECC_SECP384R1_OID = 210,
+    ECC_BRAINPOOLP384R1_OID = 108,
+    ECC_BRAINPOOLP512R1_OID = 110,
+    ECC_SECP521R1_OID = 211,
 };
 
 
@@ -610,7 +631,9 @@ WOLFSSL_LOCAL int ToTraditional(byte* buffer, word32 length);
 WOLFSSL_LOCAL int ToTraditionalEnc(byte* buffer, word32 length,const char*,int);
 
 typedef struct tm wolfssl_tm;
-
+#if defined(WOLFSSL_MYSQL_COMPATIBLE)
+WOLFSSL_LOCAL int GetTimeString(byte* date, int format, char* buf, int len);
+#endif
 WOLFSSL_LOCAL int ExtractDate(const unsigned char* date, unsigned char format,
                                                  wolfssl_tm* certTime, int* idx);
 WOLFSSL_LOCAL int ValidateDate(const byte* date, byte format, int dateType);
@@ -626,6 +649,10 @@ WOLFSSL_LOCAL int GetMyVersion(const byte* input, word32* inOutIdx,
                               int* version);
 WOLFSSL_LOCAL int GetInt(mp_int* mpi, const byte* input, word32* inOutIdx,
                         word32 maxIdx);
+#ifdef HAVE_OID_ENCODING
+    WOLFSSL_LOCAL int EncodeObjectId(const word16* in, word32 inSz,
+        byte* out, word32* outSz);
+#endif
 WOLFSSL_LOCAL int GetObjectId(const byte* input, word32* inOutIdx, word32* oid,
                               word32 oidType, word32 maxIdx);
 WOLFSSL_LOCAL int GetAlgoId(const byte* input, word32* inOutIdx, word32* oid,
@@ -763,13 +790,14 @@ struct OcspRequest {
 
     byte   nonce[MAX_OCSP_NONCE_SZ];
     int    nonceSz;
+    void*  heap;
 };
 
 
 WOLFSSL_LOCAL void InitOcspResponse(OcspResponse*, CertStatus*, byte*, word32);
-WOLFSSL_LOCAL int  OcspResponseDecode(OcspResponse*, void*);
+WOLFSSL_LOCAL int  OcspResponseDecode(OcspResponse*, void*, void* heap);
 
-WOLFSSL_LOCAL int    InitOcspRequest(OcspRequest*, DecodedCert*, byte);
+WOLFSSL_LOCAL int    InitOcspRequest(OcspRequest*, DecodedCert*, byte, void*);
 WOLFSSL_LOCAL void   FreeOcspRequest(OcspRequest*);
 WOLFSSL_LOCAL int    EncodeOcspRequest(OcspRequest*, byte*, word32);
 WOLFSSL_LOCAL word32 EncodeOcspRequestExtensions(OcspRequest*, byte*, word32);
@@ -808,9 +836,10 @@ struct DecodedCRL {
     byte    nextDateFormat;          /* format of next date */
     RevokedCert* certs;              /* revoked cert list  */
     int          totalCerts;         /* number on list     */
+    void*   heap;
 };
 
-WOLFSSL_LOCAL void InitDecodedCRL(DecodedCRL*);
+WOLFSSL_LOCAL void InitDecodedCRL(DecodedCRL*, void* heap);
 WOLFSSL_LOCAL int  ParseCRL(DecodedCRL*, const byte* buff, word32 sz, void* cm);
 WOLFSSL_LOCAL void FreeDecodedCRL(DecodedCRL*);
 

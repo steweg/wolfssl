@@ -211,6 +211,7 @@
 #if defined(FP_64BIT)
    /* for GCC only on supported platforms */
    typedef unsigned long long fp_digit;   /* 64bit, 128 uses mode(TI) below */
+   #define SIZEOF_FP_DIGIT 8
    typedef unsigned long      fp_word __attribute__ ((mode(TI)));
 #else
    #if defined(_MSC_VER) || defined(__BORLANDC__)
@@ -221,12 +222,14 @@
 
    #ifndef NO_64BIT
       typedef unsigned int       fp_digit;
+      #define SIZEOF_FP_DIGIT 4
       typedef ulong64            fp_word;
       #define FP_32BIT
    #else
       /* some procs like coldfire prefer not to place multiply into 64bit type
          even though it exists */
       typedef unsigned short     fp_digit;
+      #define SIZEOF_FP_DIGIT 2
       typedef unsigned int       fp_word;
    #endif
 #endif
@@ -234,7 +237,7 @@
 #endif /* WOLFSSL_BIGINT_TYPES */
 
 /* # of digits this is */
-#define DIGIT_BIT  (int)((CHAR_BIT) * sizeof(fp_digit))
+#define DIGIT_BIT   ((CHAR_BIT) * SIZEOF_FP_DIGIT)
 
 /* Max size of any number in bits.  Basically the largest size you will be
  * multiplying should be half [or smaller] of FP_MAX_SIZE-four_digit
@@ -344,9 +347,7 @@ typedef struct {
 #define TFM_SQR64
 #endif
 
-/* do we want some overflow checks
-   Not required if you make sure your numbers are within range (e.g. by default a modulus for fp_exptmod() can only be up to 2048 bits long)
- */
+/* Optional math checks (enable WOLFSSL_DEBUG_MATH to print info) */
 /* #define TFM_CHECK */
 
 /* Is the target a P4 Prescott
@@ -380,6 +381,7 @@ typedef struct {
 #define fp_iszero(a) (((a)->used == 0) ? FP_YES : FP_NO)
 #define fp_iseven(a) (((a)->used > 0 && (((a)->dp[0] & 1) == 0)) ? FP_YES : FP_NO)
 #define fp_isodd(a)  (((a)->used > 0  && (((a)->dp[0] & 1) == 1)) ? FP_YES : FP_NO)
+#define fp_isneg(a)  (((a)->sign != 0) ? FP_YES : FP_NO)
 
 /* set to a small digit */
 void fp_set(fp_int *a, fp_digit b);
@@ -477,6 +479,12 @@ void fp_mul_d(fp_int *a, fp_digit b, fp_int *c);
 /* d = a * b (mod c) */
 int fp_mulmod(fp_int *a, fp_int *b, fp_int *c, fp_int *d);
 
+/* d = a - b (mod c) */
+int fp_submod(fp_int *a, fp_int *b, fp_int *c, fp_int *d);
+
+/* d = a + b (mod c) */
+int fp_addmod(fp_int *a, fp_int *b, fp_int *c, fp_int *d);
+
 /* c = a * a (mod b) */
 int fp_sqrmod(fp_int *a, fp_int *b, fp_int *c);
 
@@ -508,8 +516,11 @@ int fp_exptmod(fp_int *a, fp_int *b, fp_int *c, fp_int *d);
 /* perform a Miller-Rabin test of a to the base b and store result in "result" */
 /*void fp_prime_miller_rabin (fp_int * a, fp_int * b, int *result);*/
 
+#define FP_PRIME_SIZE      256
 /* 256 trial divisions + 8 Miller-Rabins, returns FP_YES if probable prime  */
 /*int fp_isprime(fp_int *a);*/
+/* extended version of fp_isprime, do 't' Miller-Rabins instead of only 8 */
+/*int fp_isprime_ex(fp_int *a, int t);*/
 
 /* Primality generation flags */
 /*#define TFM_PRIME_BBS      0x0001 */ /* BBS style prime */
@@ -524,16 +535,16 @@ int fp_exptmod(fp_int *a, fp_int *b, fp_int *c, fp_int *d);
 
 /*int fp_prime_random_ex(fp_int *a, int t, int size, int flags, tfm_prime_callback cb, void *dat);*/
 
-/* radix conersions */
+/* radix conversions */
 int fp_count_bits(fp_int *a);
 int fp_leading_bit(fp_int *a);
 
 int fp_unsigned_bin_size(fp_int *a);
-void fp_read_unsigned_bin(fp_int *a, unsigned char *b, int c);
+void fp_read_unsigned_bin(fp_int *a, const unsigned char *b, int c);
 void fp_to_unsigned_bin(fp_int *a, unsigned char *b);
 
 /*int fp_signed_bin_size(fp_int *a);*/
-/*void fp_read_signed_bin(fp_int *a, unsigned char *b, int c);*/
+/*void fp_read_signed_bin(fp_int *a, const unsigned char *b, int c);*/
 /*void fp_to_signed_bin(fp_int *a, unsigned char *b);*/
 
 /*int fp_read_radix(fp_int *a, char *str, int radix);*/
@@ -548,103 +559,38 @@ void fp_reverse(unsigned char *s, int len);
 
 void fp_mul_comba(fp_int *a, fp_int *b, fp_int *c);
 
-#ifdef TFM_SMALL_SET
 void fp_mul_comba_small(fp_int *a, fp_int *b, fp_int *c);
-#endif
-
-#ifdef TFM_MUL3
 void fp_mul_comba3(fp_int *a, fp_int *b, fp_int *c);
-#endif
-#ifdef TFM_MUL4
 void fp_mul_comba4(fp_int *a, fp_int *b, fp_int *c);
-#endif
-#ifdef TFM_MUL6
 void fp_mul_comba6(fp_int *a, fp_int *b, fp_int *c);
-#endif
-#ifdef TFM_MUL7
 void fp_mul_comba7(fp_int *a, fp_int *b, fp_int *c);
-#endif
-#ifdef TFM_MUL8
 void fp_mul_comba8(fp_int *a, fp_int *b, fp_int *c);
-#endif
-#ifdef TFM_MUL9
 void fp_mul_comba9(fp_int *a, fp_int *b, fp_int *c);
-#endif
-#ifdef TFM_MUL12
 void fp_mul_comba12(fp_int *a, fp_int *b, fp_int *c);
-#endif
-#ifdef TFM_MUL17
 void fp_mul_comba17(fp_int *a, fp_int *b, fp_int *c);
-#endif
-
-#ifdef TFM_MUL20
 void fp_mul_comba20(fp_int *a, fp_int *b, fp_int *c);
-#endif
-#ifdef TFM_MUL24
 void fp_mul_comba24(fp_int *a, fp_int *b, fp_int *c);
-#endif
-#ifdef TFM_MUL28
 void fp_mul_comba28(fp_int *a, fp_int *b, fp_int *c);
-#endif
-#ifdef TFM_MUL32
 void fp_mul_comba32(fp_int *a, fp_int *b, fp_int *c);
-#endif
-#ifdef TFM_MUL48
 void fp_mul_comba48(fp_int *a, fp_int *b, fp_int *c);
-#endif
-#ifdef TFM_MUL64
 void fp_mul_comba64(fp_int *a, fp_int *b, fp_int *c);
-#endif
-
 void fp_sqr_comba(fp_int *a, fp_int *b);
-
-#ifdef TFM_SMALL_SET
 void fp_sqr_comba_small(fp_int *a, fp_int *b);
-#endif
-
-#ifdef TFM_SQR3
 void fp_sqr_comba3(fp_int *a, fp_int *b);
-#endif
-#ifdef TFM_SQR4
 void fp_sqr_comba4(fp_int *a, fp_int *b);
-#endif
-#ifdef TFM_SQR6
 void fp_sqr_comba6(fp_int *a, fp_int *b);
-#endif
-#ifdef TFM_SQR7
 void fp_sqr_comba7(fp_int *a, fp_int *b);
-#endif
-#ifdef TFM_SQR8
 void fp_sqr_comba8(fp_int *a, fp_int *b);
-#endif
-#ifdef TFM_SQR9
 void fp_sqr_comba9(fp_int *a, fp_int *b);
-#endif
-#ifdef TFM_SQR12
 void fp_sqr_comba12(fp_int *a, fp_int *b);
-#endif
-#ifdef TFM_SQR17
 void fp_sqr_comba17(fp_int *a, fp_int *b);
-#endif
-
-#ifdef TFM_SQR20
 void fp_sqr_comba20(fp_int *a, fp_int *b);
-#endif
-#ifdef TFM_SQR24
 void fp_sqr_comba24(fp_int *a, fp_int *b);
-#endif
-#ifdef TFM_SQR28
 void fp_sqr_comba28(fp_int *a, fp_int *b);
-#endif
-#ifdef TFM_SQR32
 void fp_sqr_comba32(fp_int *a, fp_int *b);
-#endif
-#ifdef TFM_SQR48
 void fp_sqr_comba48(fp_int *a, fp_int *b);
-#endif
-#ifdef TFM_SQR64
 void fp_sqr_comba64(fp_int *a, fp_int *b);
-#endif
+
 /*extern const char *fp_s_rmap;*/
 
 
@@ -653,26 +599,27 @@ void fp_sqr_comba64(fp_int *a, fp_int *b);
  */
 
 /* Types */
-    typedef fp_digit mp_digit;
-    typedef fp_word  mp_word;
-    typedef fp_int mp_int;
+typedef fp_digit mp_digit;
+typedef fp_word  mp_word;
+typedef fp_int mp_int;
 
 /* Constants */
-    #define MP_LT   FP_LT   /* less than    */
-    #define MP_EQ   FP_EQ   /* equal to     */
-    #define MP_GT   FP_GT   /* greater than */
-    #define MP_VAL  FP_VAL  /* invalid */
-    #define MP_MEM  FP_MEM  /* memory error */
-	#define MP_NOT_INF FP_NOT_INF /* point not at infinity */
-    #define MP_OKAY FP_OKAY /* ok result    */
-    #define MP_NO   FP_NO   /* yes/no result */
-    #define MP_YES  FP_YES  /* yes/no result */
+#define MP_LT   FP_LT   /* less than    */
+#define MP_EQ   FP_EQ   /* equal to     */
+#define MP_GT   FP_GT   /* greater than */
+#define MP_VAL  FP_VAL  /* invalid */
+#define MP_MEM  FP_MEM  /* memory error */
+#define MP_NOT_INF FP_NOT_INF /* point not at infinity */
+#define MP_OKAY FP_OKAY /* ok result    */
+#define MP_NO   FP_NO   /* yes/no result */
+#define MP_YES  FP_YES  /* yes/no result */
 
 /* Prototypes */
 #define mp_zero(a)  fp_zero(a)
 #define mp_iseven(a)  fp_iseven(a)
 int  mp_init (mp_int * a);
 void mp_clear (mp_int * a);
+#define mp_forcezero(a) fp_clear(a)
 int mp_init_multi(mp_int* a, mp_int* b, mp_int* c, mp_int* d, mp_int* e, mp_int* f);
 
 int  mp_add (mp_int * a, mp_int * b, mp_int * c);
@@ -681,6 +628,8 @@ int  mp_add_d (mp_int * a, mp_digit b, mp_int * c);
 
 int  mp_mul (mp_int * a, mp_int * b, mp_int * c);
 int  mp_mulmod (mp_int * a, mp_int * b, mp_int * c, mp_int * d);
+int  mp_submod (mp_int* a, mp_int* b, mp_int* c, mp_int* d);
+int  mp_addmod (mp_int* a, mp_int* b, mp_int* c, mp_int* d);
 int  mp_mod(mp_int *a, mp_int *b, mp_int *c);
 int  mp_invmod(mp_int *a, mp_int *b, mp_int *c);
 int  mp_exptmod (mp_int * g, mp_int * x, mp_int * p, mp_int * y);
@@ -698,6 +647,7 @@ int  mp_sub_d(fp_int *a, fp_digit b, fp_int *c);
 int  mp_copy(fp_int* a, fp_int* b);
 int  mp_isodd(mp_int* a);
 int  mp_iszero(mp_int* a);
+int  mp_isneg(mp_int* a);
 int  mp_count_bits(mp_int *a);
 int  mp_leading_bit(mp_int *a);
 int  mp_set_int(mp_int *a, mp_digit b);
@@ -706,6 +656,12 @@ int  mp_set_bit (mp_int * a, mp_digit b);
 void mp_rshb(mp_int *a, int x);
 int mp_toradix (mp_int *a, char *str, int radix);
 int mp_radix_size (mp_int * a, int radix, int *size);
+
+#ifdef WOLFSSL_DEBUG_MATH
+    void mp_dump(const char* desc, mp_int* a, byte verbose);
+#else
+    #define mp_dump(desc, a, verbose)
+#endif
 
 #ifdef HAVE_ECC
     int mp_read_radix(mp_int* a, const char* str, int radix);
@@ -733,6 +689,7 @@ int  mp_exch(mp_int *a, mp_int *b);
 int  mp_cnt_lsb(fp_int *a);
 int  mp_div_2d(fp_int *a, int b, fp_int *c, fp_int *d);
 int  mp_mod_d(fp_int* a, fp_digit b, fp_digit* c);
+int  mp_lshd (mp_int * a, int b);
 
 WOLFSSL_API word32 CheckRunTimeFastMath(void);
 

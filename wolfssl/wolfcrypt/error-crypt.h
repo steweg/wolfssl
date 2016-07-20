@@ -59,6 +59,8 @@ enum {
     MP_ZERO_E          = -121,  /* got a mp zero result, not expected */
 
     MEMORY_E           = -125,  /* out of memory error */
+    VAR_STATE_CHANGE_E = -126,  /* var state modified by different thread */
+
 
     RSA_WRONG_TYPE_E   = -130,  /* RSA wrong block type for RSA function */
     RSA_BUFFER_E       = -131,  /* RSA buffer error, output too small or
@@ -170,6 +172,8 @@ enum {
     WC_PENDING_E        = -233,  /* wolfCrypt operation pending (would block) */
 
     WC_KEY_SIZE_E       = -234,  /* Key size error, either too small or large */
+    ASN_COUNTRY_SIZE_E  = -235,  /* ASN Cert Gen, invalid country code size */
+    MISSING_RNG_E       = -236,  /* RNG required but not provided */
 
     MIN_CODE_E          = -300   /* errors -101 - -299 */
 

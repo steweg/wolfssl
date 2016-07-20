@@ -196,10 +196,10 @@ typedef int ltm_prime_callback(unsigned char *dst, int len, void *dat);
 /* ---> Basic Manipulations <--- */
 #define mp_iszero(a) (((a)->used == 0) ? MP_YES : MP_NO)
 #define mp_iseven(a) \
-    (((a)->used > 0 && (((a)->dp[0] & 1) == 0)) ? MP_YES : MP_NO)
+    (((a)->used > 0 && (((a)->dp[0] & 1u) == 0u)) ? MP_YES : MP_NO)
 #define mp_isodd(a) \
-    (((a)->used > 0 && (((a)->dp[0] & 1) == 1)) ? MP_YES : MP_NO)
-
+    (((a)->used > 0 && (((a)->dp[0] & 1u) == 1u)) ? MP_YES : MP_NO)
+#define mp_isneg(a)  (((a)->sign != MP_ZPOS) ? MP_YES : MP_NO)
 
 /* number of primes */
 #ifdef MP_8BIT
@@ -230,6 +230,7 @@ extern const char *mp_s_rmap;
 /* 6 functions needed by Rsa */
 int  mp_init (mp_int * a);
 void mp_clear (mp_int * a);
+void mp_forcezero(mp_int * a);
 int  mp_unsigned_bin_size(mp_int * a);
 int  mp_read_unsigned_bin (mp_int * a, const unsigned char *b, int c);
 int  mp_to_unsigned_bin (mp_int * a, unsigned char *b);
@@ -295,6 +296,8 @@ int  mp_mul_2(mp_int * a, mp_int * b);
 int  mp_mul (mp_int * a, mp_int * b, mp_int * c);
 int  mp_sqr (mp_int * a, mp_int * b);
 int  mp_mulmod (mp_int * a, mp_int * b, mp_int * c, mp_int * d);
+int  mp_submod (mp_int* a, mp_int* b, mp_int* c, mp_int* d);
+int  mp_addmod (mp_int* a, mp_int* b, mp_int* c, mp_int* d);
 int  mp_mul_d (mp_int * a, mp_digit b, mp_int * c);
 int  mp_2expt (mp_int * a, int b);
 int  mp_set_bit (mp_int * a, int b);
@@ -309,6 +312,12 @@ int mp_init_multi(mp_int* a, mp_int* b, mp_int* c, mp_int* d, mp_int* e,
                   mp_int* f);
 int mp_toradix (mp_int *a, char *str, int radix);
 int mp_radix_size (mp_int * a, int radix, int *size);
+
+#ifdef WOLFSSL_DEBUG_MATH
+    void mp_dump(const char* desc, mp_int* a, byte verbose);
+#else
+    #define mp_dump(desc, a, verbose)
+#endif
 
 #if defined(HAVE_ECC) || defined(WOLFSSL_KEY_GEN)
     int mp_sqrmod(mp_int* a, mp_int* b, mp_int* c);

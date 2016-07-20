@@ -242,6 +242,9 @@ static void Usage(void)
 #ifdef WOLFSSL_TRUST_PEER_CERT
     printf("-E <file>   Path to load trusted peer cert\n");
 #endif
+#ifdef HAVE_WNR
+    printf("-q <file>   Whitewood config file,      default %s\n", wnrConfig);
+#endif
 }
 
 THREAD_RETURN CYASSL_THREAD server_test(void* args)
@@ -249,11 +252,15 @@ THREAD_RETURN CYASSL_THREAD server_test(void* args)
     SOCKET_T sockfd   = WOLFSSL_SOCKET_INVALID;
     SOCKET_T clientfd = WOLFSSL_SOCKET_INVALID;
 
-    SSL_METHOD* method = 0;
+    wolfSSL_method_func method = NULL;
     SSL_CTX*    ctx    = 0;
     SSL*        ssl    = 0;
 
+#ifndef WOLFSSL_ALT_TEST_STRINGS
     const char msg[] = "I hear you fa shizzle!";
+#else
+    const char msg[] = "I hear you fa shizzle!\n";
+#endif
     char   input[80];
     int    ch;
     int    version = SERVER_DEFAULT_VERSION;
@@ -312,6 +319,22 @@ THREAD_RETURN CYASSL_THREAD server_test(void* args)
     char*  ocspUrl  = NULL;
 #endif
 
+#ifdef HAVE_WNR
+    const char* wnrConfigFile = wnrConfig;
+#endif
+
+#ifdef WOLFSSL_STATIC_MEMORY
+    #if (defined(HAVE_ECC) && !defined(ALT_ECC_SIZE)) \
+        || defined(SESSION_CERTS)
+        /* big enough to handle most cases including session certs */
+        byte memory[204000];
+    #else
+        byte memory[80000];
+    #endif
+    byte memoryIO[34500]; /* max of 17k for IO buffer (TLS packet can be 16k) */
+    WOLFSSL_MEM_CONN_STATS ssl_stats;
+#endif
+
     ((func_args*)args)->return_code = -1; /* error state */
 
 #ifdef NO_RSA
@@ -319,7 +342,6 @@ THREAD_RETURN CYASSL_THREAD server_test(void* args)
     ourCert    = (char*)eccCert;
     ourKey     = (char*)eccKey;
 #endif
-    (void)trackMemory;
     (void)pkCallbacks;
     (void)needDH;
     (void)ourKey;
@@ -343,8 +365,8 @@ THREAD_RETURN CYASSL_THREAD server_test(void* args)
 #ifdef WOLFSSL_VXWORKS
     useAnyAddr = 1;
 #else
-    while ((ch = mygetopt(argc, argv, "?jdbstnNufrawPIR:p:v:l:A:c:k:Z:S:oO:D:L:ieB:E:"))
-                         != -1) {
+    while ((ch = mygetopt(argc, argv,
+                  "?jdbstnNufrawPIR:p:v:l:A:c:k:Z:S:oO:D:L:ieB:E:q:")) != -1) {
         switch (ch) {
             case '?' :
                 Usage();
@@ -522,6 +544,12 @@ THREAD_RETURN CYASSL_THREAD server_test(void* args)
                 break;
             #endif
 
+            case 'q' :
+                #ifdef HAVE_WNR
+                    wnrConfigFile = myoptarg;
+                #endif
+                break;
+
             default:
                 Usage();
                 exit(MY_EX_USAGE);
@@ -547,27 +575,32 @@ THREAD_RETURN CYASSL_THREAD server_test(void* args)
         }
     }
 
-#ifdef USE_CYASSL_MEMORY
+#if defined(USE_CYASSL_MEMORY) && !defined(WOLFSSL_STATIC_MEMORY)
     if (trackMemory)
         InitMemoryTracker();
+#endif
+
+#ifdef HAVE_WNR
+    if (wc_InitNetRandom(wnrConfigFile, NULL, 5000) != 0)
+        err_sys("can't load whitewood net random config file");
 #endif
 
     switch (version) {
 #ifndef NO_OLD_TLS
     #ifdef WOLFSSL_ALLOW_SSLV3
         case 0:
-            method = SSLv3_server_method();
+            method = wolfSSLv3_server_method_ex;
             break;
     #endif
 
     #ifndef NO_TLS
         case 1:
-            method = TLSv1_server_method();
+            method = wolfTLSv1_server_method_ex;
             break;
 
 
         case 2:
-            method = TLSv1_1_server_method();
+            method = wolfTLSv1_1_server_method_ex;
             break;
 
         #endif
@@ -575,19 +608,19 @@ THREAD_RETURN CYASSL_THREAD server_test(void* args)
 
 #ifndef NO_TLS
         case 3:
-            method = TLSv1_2_server_method();
+            method = wolfTLSv1_2_server_method_ex;
             break;
 #endif
 
 #ifdef CYASSL_DTLS
     #ifndef NO_OLD_TLS
         case -1:
-            method = DTLSv1_server_method();
+            method = wolfDTLSv1_server_method_ex;
             break;
     #endif
 
         case -2:
-            method = DTLSv1_2_server_method();
+            method = wolfDTLSv1_2_server_method_ex;
             break;
 #endif
 
@@ -598,7 +631,19 @@ THREAD_RETURN CYASSL_THREAD server_test(void* args)
     if (method == NULL)
         err_sys("unable to get method");
 
-    ctx = SSL_CTX_new(method);
+#ifdef WOLFSSL_STATIC_MEMORY
+    if (wolfSSL_CTX_load_static_memory(&ctx, method, memory, sizeof(memory),0,1)
+            != SSL_SUCCESS)
+        err_sys("unable to load static memory and create ctx");
+
+    /* load in a buffer for IO */
+    if (wolfSSL_CTX_load_static_memory(&ctx, NULL, memoryIO, sizeof(memoryIO),
+                                 WOLFMEM_IO_POOL_FIXED | WOLFMEM_TRACK_STATS, 1)
+            != SSL_SUCCESS)
+        err_sys("unable to load static memory and create ctx");
+#else
+    ctx = SSL_CTX_new(method(NULL));
+#endif
     if (ctx == NULL)
         err_sys("unable to get ctx");
 
@@ -765,10 +810,31 @@ THREAD_RETURN CYASSL_THREAD server_test(void* args)
                 err_sys("tcp accept failed");
             }
         }
+#if defined(WOLFSSL_STATIC_MEMORY) && defined(DEBUG_WOLFSSL)
+    {
+        WOLFSSL_MEM_STATS mem_stats;
+        fprintf(stderr, "Before creating SSL\n");
+        if (wolfSSL_CTX_is_static_memory(ctx, &mem_stats) != 1)
+            err_sys("ctx not using static memory");
+        if (wolfSSL_PrintStats(&mem_stats) != 1) /* function in test.h */
+            err_sys("error printing out memory stats");
+    }
+#endif
 
         ssl = SSL_new(ctx);
         if (ssl == NULL)
             err_sys("unable to get SSL");
+
+#if defined(WOLFSSL_STATIC_MEMORY) && defined(DEBUG_WOLFSSL)
+    {
+        WOLFSSL_MEM_STATS mem_stats;
+        fprintf(stderr, "After creating SSL\n");
+        if (wolfSSL_CTX_is_static_memory(ctx, &mem_stats) != 1)
+            err_sys("ctx not using static memory");
+        if (wolfSSL_PrintStats(&mem_stats) != 1) /* function in test.h */
+            err_sys("error printing out memory stats");
+    }
+#endif
 
 #ifndef NO_HANDSHAKE_DONE_CB
         wolfSSL_SetHsDoneCb(ssl, myHsDoneCb, NULL);
@@ -954,6 +1020,21 @@ THREAD_RETURN CYASSL_THREAD server_test(void* args)
             if (wc_shutdown && ret == SSL_SHUTDOWN_NOT_DONE)
                 SSL_shutdown(ssl);    /* bidirectional shutdown */
         }
+        /* display collected statistics */
+#ifdef WOLFSSL_STATIC_MEMORY
+        if (wolfSSL_is_static_memory(ssl, &ssl_stats) != 1)
+            err_sys("static memory was not used with ssl");
+
+        fprintf(stderr, "\nprint off SSL memory stats\n");
+        fprintf(stderr, "*** This is memory state before wolfSSL_free is called\n");
+        fprintf(stderr, "peak connection memory = %d\n", ssl_stats.peakMem);
+        fprintf(stderr, "current memory in use  = %d\n", ssl_stats.curMem);
+        fprintf(stderr, "peak connection allocs = %d\n", ssl_stats.peakAlloc);
+        fprintf(stderr, "current connection allocs = %d\n",ssl_stats.curAlloc);
+        fprintf(stderr, "total connection allocs   = %d\n",ssl_stats.totalAlloc);
+        fprintf(stderr, "total connection frees    = %d\n\n", ssl_stats.totalFr);
+
+#endif
         SSL_free(ssl);
 
         CloseSocket(clientfd);
@@ -969,6 +1050,7 @@ THREAD_RETURN CYASSL_THREAD server_test(void* args)
         }
     } /* while(1) */
 
+
     CloseSocket(sockfd);
     SSL_CTX_free(ctx);
 
@@ -980,7 +1062,7 @@ THREAD_RETURN CYASSL_THREAD server_test(void* args)
     ecc_fp_free();  /* free per thread cache */
 #endif
 
-#ifdef USE_WOLFSSL_MEMORY
+#if defined(USE_WOLFSSL_MEMORY) && !defined(WOLFSSL_STATIC_MEMORY)
     if (trackMemory)
         ShowMemoryTracker();
 #endif
@@ -1003,6 +1085,7 @@ THREAD_RETURN CYASSL_THREAD server_test(void* args)
     (void) useNtruKey;
     (void) ourDhParam;
     (void) ourCert;
+    (void) trackMemory;
 #ifndef CYASSL_TIRTOS
     return 0;
 #endif
@@ -1030,10 +1113,10 @@ THREAD_RETURN CYASSL_THREAD server_test(void* args)
         args.signal = &ready;
         InitTcpReady(&ready);
 
-        CyaSSL_Init();
 #if defined(DEBUG_CYASSL) && !defined(WOLFSSL_MDK_SHELL)
         CyaSSL_Debugging_ON();
 #endif
+        CyaSSL_Init();
         ChangeToWolfRoot();
 
 #ifdef HAVE_STACK_SIZE
@@ -1047,6 +1130,12 @@ THREAD_RETURN CYASSL_THREAD server_test(void* args)
 #ifdef HAVE_CAVIUM
         CspShutdown(CAVIUM_DEV_ID);
 #endif
+
+#ifdef HAVE_WNR
+    if (wc_FreeNetRandom() < 0)
+        err_sys("Failed to free netRandom context");
+#endif /* HAVE_WNR */
+
         return args.return_code;
     }
 

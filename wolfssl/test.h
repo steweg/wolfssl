@@ -257,6 +257,10 @@
 #define cliEccKey  "certs/ecc-client-key.pem"
 #define cliEccCert "certs/client-ecc-cert.pem"
 #define crlPemDir  "certs/crl"
+#ifdef HAVE_WNR
+    /* Whitewood netRandom default config file */
+    #define wnrConfig  "wnr-example.conf"
+#endif
 #else
 #define caCert     "./certs/ca-cert.pem"
 #define eccCert    "./certs/server-ecc.pem"
@@ -271,6 +275,10 @@
 #define cliEccKey  "./certs/ecc-client-key.pem"
 #define cliEccCert "./certs/client-ecc-cert.pem"
 #define crlPemDir  "./certs/crl"
+#ifdef HAVE_WNR
+    /* Whitewood netRandom default config file */
+    #define wnrConfig  "./wnr-example.conf"
+#endif
 #endif
 
 typedef struct tcp_ready {
@@ -563,7 +571,7 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
         #endif
 
         if (entry) {
-            memcpy(&addr->sin_addr.s_addr, entry->h_addr_list[0],
+            XMEMCPY(&addr->sin_addr.s_addr, entry->h_addr_list[0],
                    entry->h_length);
             useLookup = 1;
         }
@@ -611,7 +619,7 @@ static INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
             if (ret < 0 || answer == NULL)
                 err_sys("getaddrinfo failed");
 
-            memcpy(addr, answer->ai_addr, answer->ai_addrlen);
+            XMEMCPY(addr, answer->ai_addr, answer->ai_addrlen);
             freeaddrinfo(answer);
         #else
             printf("no ipv6 getaddrinfo, loopback only tests/examples\n");
@@ -989,12 +997,15 @@ static INLINE unsigned int my_psk_server_cb(WOLFSSL* ssl, const char* identity,
 #endif /* NO_PSK */
 
 
-#ifdef USE_WINDOWS_API
+#if defined(WOLFSSL_USER_CURRTIME)
+    extern   double current_time(int reset);
+
+#elif defined(USE_WINDOWS_API)
 
     #define WIN32_LEAN_AND_MEAN
     #include <windows.h>
 
-    static INLINE double current_time()
+    static INLINE double current_time(int reset)
     {
         static int init = 0;
         static LARGE_INTEGER freq;
@@ -1008,6 +1019,7 @@ static INLINE unsigned int my_psk_server_cb(WOLFSSL* ssl, const char* identity,
 
         QueryPerformanceCounter(&count);
 
+        (void)reset;
         return (double)count.QuadPart / freq.QuadPart;
     }
 
@@ -1023,7 +1035,7 @@ static INLINE unsigned int my_psk_server_cb(WOLFSSL* ssl, const char* identity,
         struct timeval tv;
         gettimeofday(&tv, 0);
         (void)reset;
-        
+
         return (double)tv.tv_sec + (double)tv.tv_usec / 1000000;
     }
 #else
@@ -1533,7 +1545,7 @@ static INLINE int myDecryptVerifyCb(WOLFSSL* ssl,
     if (ret != 0)
         return ret;
 
-    if (memcmp(verify, decOut + decSz - digestSz - pad - padByte,
+    if (XMEMCMP(verify, decOut + decSz - digestSz - pad - padByte,
                digestSz) != 0) {
         printf("myDecryptVerify verify failed\n");
         return -1;
@@ -1579,6 +1591,31 @@ static INLINE void FreeAtomicUser(WOLFSSL* ssl)
 
 #endif /* ATOMIC_USER */
 
+#ifdef WOLFSSL_STATIC_MEMORY
+static INLINE int wolfSSL_PrintStats(WOLFSSL_MEM_STATS* stats)
+{
+    word16 i;
+
+    if (stats == NULL) {
+        return 0;
+    }
+
+    /* print to stderr so is on the same pipe as WOLFSSL_DEBUG */
+    fprintf(stderr, "Total mallocs   = %d\n", stats->totalAlloc);
+    fprintf(stderr, "Total frees     = %d\n", stats->totalFr);
+    fprintf(stderr, "Current mallocs = %d\n", stats->curAlloc);
+    fprintf(stderr, "Available IO    = %d\n", stats->avaIO);
+    fprintf(stderr, "Max con. handshakes  = %d\n", stats->maxHa);
+    fprintf(stderr, "Max con. IO          = %d\n", stats->maxIO);
+    fprintf(stderr, "State of memory blocks: size   : available \n");
+    for (i = 0; i < WOLFMEM_MAX_BUCKETS; i++) {
+       fprintf(stderr, "                      : %d\t : %d\n", stats->blockSz[i],
+                                                            stats->avaBlock[i]);
+    }
+
+    return 1;
+}
+#endif /* WOLFSSL_STATIC_MEMORY */
 
 #ifdef HAVE_PK_CALLBACKS
 
@@ -1736,6 +1773,13 @@ static INLINE int myRsaDec(WOLFSSL* ssl, byte* in, word32 inSz,
 
     ret = wc_RsaPrivateKeyDecode(key, &idx, &myKey, keySz);
     if (ret == 0) {
+        #ifdef WC_RSA_BLINDING
+            ret = wc_RsaSetRNG(&myKey, wolfSSL_GetRNG(ssl));
+            if (ret != 0) {
+                wc_FreeRsaKey(&myKey);
+                return ret;
+            }
+        #endif
         ret = wc_RsaPrivateDecryptInline(in, inSz, out, &myKey);
     }
     wc_FreeRsaKey(&myKey);

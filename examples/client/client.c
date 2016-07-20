@@ -502,6 +502,9 @@ static void Usage(void)
 #ifdef WOLFSSL_TRUST_PEER_CERT
     printf("-E <file>   Path to load trusted peer cert\n");
 #endif
+#ifdef HAVE_WNR
+    printf("-q <file>   Whitewood config file,      default %s\n", wnrConfig);
+#endif
 }
 
 THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
@@ -514,13 +517,19 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
 
     WOLFSSL*         sslResume = 0;
     WOLFSSL_SESSION* session = 0;
-    char         resumeMsg[32] = "resuming wolfssl!";
-    int          resumeSz    = (int)strlen(resumeMsg);
 
+#ifndef WOLFSSL_ALT_TEST_STRINGS
     char msg[32] = "hello wolfssl!";   /* GET may make bigger */
+    char resumeMsg[32] = "resuming wolfssl!";
+#else
+    char msg[32] = "hello wolfssl!\n";
+    char resumeMsg[32] = "resuming wolfssl!\n";
+#endif
+
     char reply[80];
     int  input;
-    int  msgSz = (int)strlen(msg);
+    int  msgSz = (int)XSTRLEN(msg);
+    int  resumeSz = (int)XSTRLEN(resumeMsg);
 
     word16 port   = wolfSSLPort;
     char* host   = (char*)wolfSSLIP;
@@ -588,6 +597,10 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
     char*  ocspUrl  = NULL;
 #endif
 
+#ifdef HAVE_WNR
+    const char* wnrConfigFile = wnrConfig;
+#endif
+
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
 
@@ -601,7 +614,6 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
     (void)resumeSz;
     (void)session;
     (void)sslResume;
-    (void)trackMemory;
     (void)atomicUser;
     (void)pkCallbacks;
     (void)scr;
@@ -620,7 +632,7 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
 
 #ifndef WOLFSSL_VXWORKS
     while ((ch = mygetopt(argc, argv,
-          "?gdeDusmNrwRitfxXUPCVh:p:v:l:A:c:k:Z:b:zS:F:L:ToO:aB:W:E:M:"))
+          "?gdeDusmNrwRitfxXUPCVh:p:v:l:A:c:k:Z:b:zS:F:L:ToO:aB:W:E:M:q:"))
             != -1) {
         switch (ch) {
             case '?' :
@@ -873,6 +885,12 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
 
                 break;
 
+            case 'q' :
+                #ifdef HAVE_WNR
+                    wnrConfigFile = myoptarg;
+                #endif
+                break;
+
             default:
                 Usage();
                 exit(MY_EX_USAGE);
@@ -967,9 +985,14 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
         }
     }
 
-#ifdef USE_WOLFSSL_MEMORY
+#if defined(USE_WOLFSSL_MEMORY) && !defined(WOLFSSL_STATIC_MEMORY)
     if (trackMemory)
         InitMemoryTracker();
+#endif
+
+#ifdef HAVE_WNR
+    if (wc_InitNetRandom(wnrConfigFile, NULL, 5000) != 0)
+        err_sys("can't load whitewood net random config file");
 #endif
 
     switch (version) {
@@ -1383,8 +1406,8 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
                    " nonblocking yet");
         } else {
             if (wolfSSL_Rehandshake(ssl) != SSL_SUCCESS) {
-                int  err = wolfSSL_get_error(ssl, 0);
                 char buffer[WOLFSSL_MAX_ERROR_SZ];
+                err = wolfSSL_get_error(ssl, 0);
                 printf("err = %d, %s\n", err,
                                 wolfSSL_ERR_error_string(err, buffer));
                 err_sys("wolfSSL_Rehandshake failed");
@@ -1403,6 +1426,17 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
         strncpy(resumeMsg, "GET /index.html HTTP/1.0\r\n\r\n", resumeSz);
         resumeMsg[resumeSz] = '\0';
     }
+
+/* allow some time for exporting the session */
+#ifdef WOLFSSL_SESSION_EXPORT_DEBUG
+    #ifdef USE_WINDOWS_API
+            Sleep(500);
+    #elif defined(WOLFSSL_TIRTOS)
+            Task_sleep(1);
+    #else
+            sleep(1);
+    #endif
+#endif /* WOLFSSL_SESSION_EXPORT_DEBUG */
     if (wolfSSL_write(ssl, msg, msgSz) != msgSz)
         err_sys("SSL_write failed");
 
@@ -1521,6 +1555,18 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
                 printf("Getting ALPN protocol name failed\n");
         }
 #endif
+
+    /* allow some time for exporting the session */
+    #ifdef WOLFSSL_SESSION_EXPORT_DEBUG
+        #ifdef USE_WINDOWS_API
+            Sleep(500);
+        #elif defined(WOLFSSL_TIRTOS)
+            Task_sleep(1);
+        #else
+            sleep(1);
+        #endif
+    #endif /* WOLFSSL_SESSION_EXPORT_DEBUG */
+
         if (wolfSSL_write(sslResume, resumeMsg, resumeSz) != resumeSz)
             err_sys("SSL_write failed");
 
@@ -1574,7 +1620,7 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
 
     ((func_args*)args)->return_code = 0;
 
-#ifdef USE_WOLFSSL_MEMORY
+#if defined(USE_WOLFSSL_MEMORY) && !defined(WOLFSSL_STATIC_MEMORY)
     if (trackMemory)
         ShowMemoryTracker();
 #endif /* USE_WOLFSSL_MEMORY */
@@ -1587,6 +1633,7 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
     (void) verifyCert;
     (void) ourCert;
     (void) ourKey;
+    (void) trackMemory;
 
 #if !defined(WOLFSSL_TIRTOS)
     return 0;
@@ -1612,10 +1659,10 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
         args.argc = argc;
         args.argv = argv;
 
-        wolfSSL_Init();
 #if defined(DEBUG_WOLFSSL) && !defined(WOLFSSL_MDK_SHELL) && !defined(STACK_TRAP)
         wolfSSL_Debugging_ON();
 #endif
+        wolfSSL_Init();
         ChangeToWolfRoot();
 
 #ifdef HAVE_STACK_SIZE
@@ -1628,6 +1675,12 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
 #ifdef HAVE_CAVIUM
         CspShutdown(CAVIUM_DEV_ID);
 #endif
+
+#ifdef HAVE_WNR
+    if (wc_FreeNetRandom() < 0)
+        err_sys("Failed to free netRandom context");
+#endif /* HAVE_WNR */
+
         return args.return_code;
     }
 

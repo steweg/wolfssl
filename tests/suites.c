@@ -115,7 +115,7 @@ static int IsValidCipherSuite(const char* line, char* suite)
     if (begin) {
         begin += 3;
 
-        end = strstr(begin, " ");
+        end = XSTRSTR(begin, " ");
 
         if (end) {
             long len = end - begin;
@@ -123,11 +123,11 @@ static int IsValidCipherSuite(const char* line, char* suite)
                 printf("suite too long!\n");
                 return 0;
             }
-            memcpy(suite, begin, len);
+            XMEMCPY(suite, begin, len);
             suite[len] = '\0';
         }
         else
-            strncpy(suite, begin, MAX_SUITE_SZ);
+            XSTRNCPY(suite, begin, MAX_SUITE_SZ);
 
         suite[MAX_SUITE_SZ] = '\0';
         found = 1;
@@ -135,7 +135,7 @@ static int IsValidCipherSuite(const char* line, char* suite)
 
     /* if QSH not enabled then do not use QSH suite */
     #ifdef HAVE_QSH
-        if (strncmp(suite, "QSH", 3) == 0) {
+        if (XSTRNCMP(suite, "QSH", 3) == 0) {
             if (wolfSSL_CTX_set_cipher_list(cipherSuiteCtx, suite + 4)
                                                                  != SSL_SUCCESS)
             return 0;
@@ -177,7 +177,7 @@ static int execute_test_case(int svr_argc, char** svr_argv,
 
     commandLine[0] = '\0';
     for (i = 0; i < svr_argc; i++) {
-        added += strlen(svr_argv[i]) + 2;
+        added += XSTRLEN(svr_argv[i]) + 2;
         if (added >= MAX_COMMAND_SZ) {
             printf("server command line too long\n"); 
             break;
@@ -251,7 +251,7 @@ static int execute_test_case(int svr_argc, char** svr_argv,
     commandLine[0] = '\0';
     added = 0;
     for (i = 0; i < cli_argc; i++) {
-        added += strlen(cli_argv[i]) + 2;
+        added += XSTRLEN(cli_argv[i]) + 2;
         if (added >= MAX_COMMAND_SZ) {
             printf("client command line too long\n"); 
             break;
@@ -469,6 +469,10 @@ int SuiteTest(void)
     args.argv = myArgv;
     strcpy(argv0[0], "SuiteTest");
 
+#ifdef WOLFSSL_STATIC_MEMORY
+    byte memory[200000];
+#endif
+
     (void)test_harness;
 
     cipherSuiteCtx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
@@ -476,6 +480,16 @@ int SuiteTest(void)
         printf("can't get cipher suite ctx\n");
         exit(EXIT_FAILURE);
     }
+
+    /* load in static memory buffer if enabled */
+#ifdef WOLFSSL_STATIC_MEMORY
+    if (wolfSSL_CTX_load_static_memory(&cipherSuiteCtx, NULL,
+                                                   memory, sizeof(memory), 0, 1)
+            != SSL_SUCCESS) {
+        printf("unable to load static memory and create ctx");
+        exit(EXIT_FAILURE);
+    }
+#endif
 
     /* default case */
     args.argc = 1;

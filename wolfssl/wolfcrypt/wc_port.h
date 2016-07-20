@@ -224,9 +224,9 @@ WOLFSSL_API int wolfCrypt_Init(void);
     #define XBADFILE   NULL
 #else
     /* stdio, default case */
+    #include <stdio.h>
     #define XFILE      FILE*
     #if defined(WOLFSSL_MDK_ARM)
-        #include <stdio.h>
         extern FILE * wolfSSL_fopen(const char *name, const char *mode) ;
         #define XFOPEN     wolfSSL_fopen
     #else
@@ -247,10 +247,10 @@ WOLFSSL_API int wolfCrypt_Init(void);
 
 /* Windows API defines its own min() macro. */
 #if defined(USE_WINDOWS_API)
-    #ifdef min
+    #if defined(min) || defined(WOLFSSL_MYSQL_COMPATIBLE)
         #define WOLFSSL_HAVE_MIN
     #endif /* min */
-    #ifdef max
+    #if defined(max) || defined(WOLFSSL_MYSQL_COMPATIBLE)
         #define WOLFSSL_HAVE_MAX
     #endif /* max */
 #endif /* USE_WINDOWS_API */
